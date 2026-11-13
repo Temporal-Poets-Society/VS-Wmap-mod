@@ -1,6 +1,6 @@
-# World Map 0.5.3-rc.3 — development test build
+# World Map 0.5.3-rc.3 — release candidate
 
-> **In development.** The last release is 0.5.1; `main` carries the test builds after it (0.5.2, 0.5.3-rc.1, 0.5.3-rc.2, 0.5.3-rc.3 and later work), which are not released. Released versions are tags (`v0.5.0`, `v0.5.1`), and `main` holds everything: since 12 November 2026 there is no separate release branch. The mid-distance renderer has been in every build since 0.5.0 and remains experimental; client and multiplayer testing continues. Changes per version: [CHANGELOG](CHANGELOG.md); the first release: [release details and verification](docs/release-0.5.0.md).
+> **In development.** This is a release candidate for 0.5.3; the last full release is 0.5.1. The mid-distance renderer remains experimental; client and multiplayer testing continues. Changes per version: [CHANGELOG](CHANGELOG.md); the first release: [release details and verification](docs/release-0.5.0.md).
 
 A standalone Vintage Story map for cylindrical worlds, Earth maps and ships. Zoom from the whole world down to a harbour without loading screens, pan east or west across Cylinder World's seam without a jump, and read latitude and longitude anywhere. Fast Map is not required.
 
@@ -24,8 +24,8 @@ Sextant fixes, surveying, the captain's chart table and course following are lat
 
 ## Install and open
 
-1. Quit the game completely, then copy `release/wmap_0.5.1.zip` into your Vintage Story data directory's `Mods` folder, replacing any previous Wmap ZIP, then restart the game. On Windows this is `%APPDATA%\VintagestoryData\Mods`. Keep the ZIP intact.
-2. For multiplayer, install the same ZIP on the server and every client. Both need 0.4.0 for the far terrain's near band and climate colours; an older server or client simply leaves them out. Far terrain meets the real sea from 0.3.10 (client). The server needs 0.3.9 to chart Cylinder World 0.11.5's natural seam band. The client and server need 0.3.8 for recorded terrain over predictions and the paced chart download (see the [changelog](CHANGELOG.md)), 0.3.7 for the Jonas barometer (0.3.6: far terrain; 0.3.5: the wind layer; 0.3.4: the corrected player arrow and other mods' layers on the atlas; 0.3.3: the detail-cache and heading changes); the server needs at least 0.3.1 for chart-ready announcements. Versions before 0.3.0 use a different network channel.
+1. Quit the game completely, then copy `wmap_0.5.3-rc.3.zip` into your Vintage Story data directory's `Mods` folder, replacing any previous Wmap ZIP, then restart the game. On Windows this is `%APPDATA%\VintagestoryData\Mods`. Keep the ZIP intact.
+2. For multiplayer, install the same ZIP on the server and every client. Client and server need the same World Map version: the network format changed in 0.5.2.
 3. Enter a world and press **M** (or your remapped world-map key), or type **`.wmap`**. **`.wmap vanilla`** opens the original map.
 
 The atlas starts in **Chart**, centered on and following the player at **2 blocks per GUI pixel**. Panning, zooming and style changes remain in effect while that atlas window exists; a new session starts in this view again.
@@ -34,7 +34,7 @@ The HUD minimap uses the same Wmap style, exploration and player heading arrow. 
 
 The first time a world with Earth Map or Cylinder World starts, the server charts the whole world once in the background. On a 204,800 × 102,400 ring this took about 70 seconds on a 16-thread desktop. The status line shows progress, and close-up detail works meanwhile. The result is cached; later starts reuse it immediately. Each client downloads it once (about 12.5 MiB for that ring) and keeps its own copy.
 
-Built and development-tested against **Vintage Story 1.22.7**. Companion versions and the exact test scopes are recorded in [testing](docs/testing.md) and [this release](docs/release-0.5.0.md). Other versions and mod combinations are unverified. Coexistence with Fast Map has not been playtested.
+Requires Vintage Story 1.22.0 or later; built and tested against **Vintage Story 1.22.7**. Companion versions and the exact test scopes are recorded in [testing](docs/testing.md) and [this release](docs/release-0.5.0.md). Other versions and mod combinations are unverified. Coexistence with Fast Map has not been playtested.
 
 ## Controls
 
@@ -91,7 +91,7 @@ Pick a layer from the **Winds** list above the map:
 
 Arrows fly with the wind, like on a pilot chart. They grow longer and heavier with strength, and carry one feather pair per step: light (from 0.1, vanilla units), moderate (0.25), strong (0.5); a small circle marks a calm. They are spaced evenly on screen at every zoom and stay put while you pan. With the cursor over the map, the position line reads the wind there, its Beaufort name and belt.
 
-Wmap samples a 512 × 256 grid over the world in the background through Sea, without extra wind network traffic. Since Sea 0.4.0, Earth or another registered provider owns wind and weather; without one, prevailing winds are calm. The readout identifies when the model is off.
+Wmap samples a 512 × 256 grid over the world in the background through Sea, without extra wind network traffic. Earth or another registered provider owns wind and weather (Sea 0.4.0 or later); without one, prevailing winds are calm. The readout identifies when the model is off.
 
 ## Far terrain
 
@@ -105,7 +105,7 @@ Wmap raises the game's camera far plane (normally 3000 blocks) while far terrain
 
 ## Mid-distance view (prototype)
 
-0.5.0-pre.1 and later prototypes only. Far terrain's near band (to 1536 blocks) shows what you recorded where you have been, over the prediction, so a town, a harbour or your own base is there past your chunks, and lights show at night:
+Experimental. Far terrain's near band (to 1536 blocks) shows what you recorded where you have been, over the prediction, so a town, a harbour or your own base is there past your chunks, and lights show at night:
 
 - **Recorded terrain** (`MidDistanceRecorded`): the recorder records every chunk the game has loaded, out to your view distance, with the game's colours and block light, within its usual time budget. Far terrain takes those heights and colours, and draws recorded structures past the terraces as blocks at their height (one per two blocks).
 - **Terraces** (`MidDistanceTerraces`): from where your chunks fade out (0.75 × view distance) to `TerraceDistance` (768 blocks), two-block cells at whole-block heights with walls, worked out on the graphics card each frame. With a view distance of 1024 or more there are none: your chunks reach past them.
@@ -113,7 +113,7 @@ Wmap raises the game's camera far plane (normally 3000 blocks) while far terrain
 
 `.wmap mid` reports what is drawn and the GPU time of far terrain and of the lights (timestamp queries, averaged); `.wmap mid terraces off` and so on switch a part without restarting, to compare. On first entering a world the window fills as the recorder works through the loaded chunks (a few hundred a second at most). Where you have never been, the prediction is shown as before. Needs far terrain (Earth Map); client only.
 
-**The far sea and Sea** (0.5.0-pre.2): Wmap's far programs declare the far-water uniforms `seaNightFloor`, `seaSkyReflect`, `seaWaveCount` and `seaWave[24]` and shade the far sea with them (night floor, sky reflected by Fresnel, wave normals fading out with distance). A water mod sets them when the game uses those programs: Sea 0.4.6 sets the first two (its far sea's reflection and night floor), Sea 0.4.7-pre.1 also its waves. Without one they stay zero and the far sea looks as before. While chunk columns within 0.75 × view distance are not loaded yet (after changing the view distance or teleporting), far terrain fills those columns, and only those, so no band of sky shows and loaded ground is never covered.
+**The far sea and Sea**: Wmap's far programs declare the far-water uniforms `seaNightFloor`, `seaSkyReflect`, `seaWaveCount` and `seaWave[24]` and shade the far sea with them (night floor, sky reflected by Fresnel, wave normals fading out with distance). A water mod sets them when the game uses those programs: Sea 0.4.6 sets the first two (its far sea's reflection and night floor), Sea 0.4.7-pre.1 also its waves. Without one they stay zero and the far sea looks as before. While chunk columns within 0.75 × view distance are not loaded yet (after changing the view distance or teleporting), far terrain fills those columns, and only those, so no band of sky shows and loaded ground is never covered.
 
 What it cannot show: overhangs, bridges and arches (one height per cell), thin things (masts, poles, fences), ships and creatures, other players' building since you last passed, and textures (each cell has one colour). Lights have no rhythm: a lighthouse's flashes (Voyage) would need a beacon registry, a later cross-mod proposal.
 
@@ -153,12 +153,12 @@ With `ShareWorldChart` (the default), every player receives the world chart and 
 
 ## Ore heat maps (Creative)
 
-On the Creative map (creative mode, the `wmap` privilege or `AllowAllPlayers`), **Ore heat** colours the map by one ore, for checking or debugging ore generation (0.5.2, client and server). The map follows every zoom: zoomed in, each cell is one chunk; zoomed out, cells grow so they stay about 10 pixels or more. The server works the map out in tiles, every ore at once, and stores them with the world's map tiles, so a place is worked out once and switching ores is instant. On an Earth world, choosing an ore the first time also stores the coarse levels of the whole world in the background. A tile not there yet is drawn from a coarser one, in its larger cells, until it arrives; the status line counts the tiles still being worked out, the legend sits at the top right and the line under the map says what the cell under the cursor holds.
+On the Creative map (creative mode, the `wmap` privilege or `AllowAllPlayers`), **Ore heat** colours the map by one ore, for checking or debugging ore generation (client and server). The map follows every zoom: zoomed in, each cell is one chunk; zoomed out, cells grow so they stay about 10 pixels or more. The server works the map out in tiles, every ore at once, and stores them with the world's map tiles, so a place is worked out once and switching ores is instant. On an Earth world, choosing an ore the first time also stores the coarse levels of the whole world in the background. A tile not there yet is drawn from a coarser one, in its larger cells, until it arrives; the status line counts the tiles still being worked out, the legend sits at the top right and the line under the map says what the cell under the cursor holds.
 
 - **One ore**: about how many blocks of that ore a chunk column there holds (32 × 32 blocks, surface to bottom), from 1 (blue) to 10,000 (red) on a logarithmic scale, and what the prospecting pick's density reading would say there (its word and factor; it lists an ore only above a factor of 0.025, smaller amounts are "miniscule").
 - **Ores the pick lists**: how many ores a density reading there would list (grey: none). Offered only where the generators answer the pick's own reading (Earth); vanilla's ore maps would over-count.
 
-The numbers come from the world's own deposit generators through the game's API, for the same deposit the prospecting pick asks about each ore. With Earth's regional ores the generators answer anywhere on the planet, exactly as they answer the pick. Where Earth keeps vanilla's rock strata in a column (under ice sheets, for example), the pick hands Earth vanilla's simulated rock column; the map does the same where that chunk is loaded, and elsewhere leaves such a cell unknown until it is, rather than reading 0 (0.5.3). `/wmapore` compares a cell with the pick where you stand. With vanilla's generators the map uses the region's ore map, so it shows only regions the server has loaded, and it is an upper bound: vanilla places ore only in its host rock, which the map does not count. Never shown on the game chart. Design and checks: [WM-D47](docs/decisions.md#wm-d47-ore-heat-maps-on-the-creative-map-052-ore1-5-november-2026) and [WM-D48](docs/decisions.md#wm-d48-ore-heat-maps-in-stored-tiles-at-every-zoom-052-6-november-2026) (stored tiles).
+The numbers come from the world's own deposit generators through the game's API, for the same deposit the prospecting pick asks about each ore. With Earth's regional ores the generators answer anywhere on the planet, exactly as they answer the pick. Where Earth keeps vanilla's rock strata in a column (under ice sheets, for example), the pick hands Earth vanilla's simulated rock column; the map does the same where that chunk is loaded, and elsewhere leaves such a cell unknown until it is, rather than reading 0. `/wmapore` compares a cell with the pick where you stand. With vanilla's generators the map uses the region's ore map, so it shows only regions the server has loaded, and it is an upper bound: vanilla places ore only in its host rock, which the map does not count. Never shown on the game chart. Design and checks: [WM-D47](docs/decisions.md#wm-d47-ore-heat-maps-on-the-creative-map-052-ore1-5-november-2026) and [WM-D48](docs/decisions.md#wm-d48-ore-heat-maps-in-stored-tiles-at-every-zoom-052-6-november-2026) (stored tiles).
 
 ## Paper maps
 
@@ -170,7 +170,7 @@ The map's content is kept in the world save (`wmap-map-<id>`); the item carries 
 
 `ModConfig/wmap.json` is created on first load. Restart after editing it.
 
-From **0.5.0-pre.14**, the world settings under **Customize > Earth** offer **Wmap: shared world chart** (`wmapSharedChart`) and **Wmap: explore by sight** (`wmapExploreBySight`). Both default to on for new worlds. Each saved world value overrides its corresponding `ShareWorldChart` / `ExploreBySight` server config setting; a missing key keeps the existing mod-config value, independently for each switch. Older worlds are not migrated or given new keys. Both switches may be changed after creation; restart the world to apply changes. The server sends effective exploration and chart access through the existing atlas sync. Global `wmap.json` defaults are not overwritten by world choices. Disabling sharing keeps the existing creative/`wmap` privilege exceptions; sight exploration still requires access to predicted terrain.
+The world settings under **Customize > Earth** offer **Wmap: shared world chart** (`wmapSharedChart`) and **Wmap: explore by sight** (`wmapExploreBySight`). Both default to on for new worlds. Each saved world value overrides its corresponding `ShareWorldChart` / `ExploreBySight` server config setting; a missing key keeps the existing mod-config value, independently for each switch. Older worlds are not migrated or given new keys. Both switches may be changed after creation; restart the world to apply changes. The server sends effective exploration and chart access through the existing atlas sync. Global `wmap.json` defaults are not overwritten by world choices. Disabling sharing keeps the existing creative/`wmap` privilege exceptions; sight exploration still requires access to predicted terrain.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -207,7 +207,7 @@ From **0.5.0-pre.14**, the world settings under **Customize > Earth** offer **Wm
 | `ShowWaypoints`, `ShowAutoMarks`, `ShowProspecting`, `ShowOtherLayers` | `true` | Client: the Show list |
 | `ProspectingOre` | `""` | Client: the ore filter; empty shows every reading |
 | `CoordinatesHud` | `true` | Client: latitude, longitude, local and UTC time and heading in the top left corner (Ctrl+Shift+V) |
-| `CoordinatesHudTime` | `true` | Client: the clocks (HH:MM) in that box. Local: Astra Terra's local solar time where it is installed, else the solar time at Earth's or the map's longitude, else the game's hour. UTC: the world's universal clock, the solar time at longitude 0 (Astra Terra's universal time, the game's hour of day); shown only where it differs from the local clock (0.5.3) |
+| `CoordinatesHudTime` | `true` | Client: the clocks (HH:MM) in that box. Local: Astra Terra's local solar time where it is installed, else the solar time at Earth's or the map's longitude, else the game's hour. UTC: the world's universal clock, the solar time at longitude 0 (Astra Terra's universal time, the game's hour of day); shown only where it differs from the local clock |
 | `DayNightOverlay` | `false` | Client: shade the night side of the world on the atlas (the Day / Night button) |
 | `WindLayer` | `1` | Client: remembered worldwide layer; 0 off, 1 weather now, 2 prevailing now, 3–14 January–December. Gameplay requires a barometer or wind-sight grant |
 | `FarTerrain` | `true` | Client: draw far terrain past the view distance |
@@ -216,7 +216,7 @@ From **0.5.0-pre.14**, the world settings under **Customize > Earth** offer **Wm
 | `FarTerrainNearBand` | `true` | Client: draw far terrain from 4-block detail tiles out to `NearBandDistance` (Earth Map; client and server 0.4.0) |
 | `NearBandDistance` | `1536` | Client: blocks to the near band's outer edge (768–1536) |
 | `FarTerrainClimate` | `true` | Client: the game's climate colours and forest canopy on far terrain (Earth Map; client and server 0.4.0) |
-| `MidDistanceRecorded` | `true` | Client (0.5.0-pre.1 prototype): record every loaded chunk out to the view distance with colours and light, and draw recorded terrain and structures in far terrain |
+| `MidDistanceRecorded` | `true` | Client (prototype): record every loaded chunk out to the view distance with colours and light, and draw recorded terrain and structures in far terrain |
 | `MidDistanceTerraces` | `true` | Client (prototype): terraces from far terrain's start to `TerraceDistance` |
 | `MidDistanceLights` | `true` | Client (prototype): recorded lights as glows at night out to `LightDistance` |
 | `TerraceDistance` | `768` | Client (prototype): blocks to the terraces' outer edge (256–768) |
@@ -224,7 +224,7 @@ From **0.5.0-pre.14**, the world settings under **Customize > Earth** offer **Wm
 
 ## Memory and storage
 
-The mid-distance view (0.5.0-pre.1 prototype) adds about 30 MiB of video memory: 24.8 MiB for the recorded tiles' two atlases and 5.3 MiB for the terraces' cell map. The world chart is 128 MiB of video memory at 8192 × 4096, plus 43 MiB of mipmaps; `WorldChartSize: 4096` needs a quarter of that. Detail pages add 16 MiB each, including one HUD minimap page; far terrain adds about 1.6 MiB of mesh buffers (2.6 MiB with the near band) and shares the world chart, and the near band and climate tiles 12.4 MiB of textures; the exploration mask is about 27 MiB with mipmaps, and the latitude/longitude lookup 8 MiB. The atlas and minimap share the world chart and exploration textures. Charting needs roughly 300 MiB of temporary server memory once.
+The mid-distance view (prototype) adds about 30 MiB of video memory: 24.8 MiB for the recorded tiles' two atlases and 5.3 MiB for the terraces' cell map. The world chart is 128 MiB of video memory at 8192 × 4096, plus 43 MiB of mipmaps; `WorldChartSize: 4096` needs a quarter of that. Detail pages add 16 MiB each, including one HUD minimap page; far terrain adds about 1.6 MiB of mesh buffers (2.6 MiB with the near band) and shares the world chart, and the near band and climate tiles 12.4 MiB of textures; the exploration mask is about 27 MiB with mipmaps, and the latitude/longitude lookup 8 MiB. The atlas and minimap share the world chart and exploration textures. Charting needs roughly 300 MiB of temporary server memory once.
 
 Under the game's `Wmap` data folder: `server/<hash>` and `client/<hash>` hold the world chart and detail tiles, which are disposable caches. `observed/<hash>` holds your exploration and recorded terrain; back it up if it matters.
 
