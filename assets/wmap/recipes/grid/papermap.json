@@ -1,0 +1,25 @@
+[
+	{
+		ingredientPattern: "PPP,PQP,PPP",
+		ingredients: {
+			"P": { type: "item", code: "game:paper-parchment" },
+			"Q": { type: "item", code: "game:inkandquill", consume: false }
+		},
+		width: 3,
+		height: 3,
+		output: { type: "item", code: "wmap:papermap-blank", quantity: 1 }
+	},
+	{
+		ingredientPattern: "D,B",
+		shapeless: true,
+		ingredients: {
+			"D": { type: "item", code: "wmap:papermap-drawn", consume: false },
+			"B": { type: "item", code: "wmap:papermap-blank" }
+		},
+		width: 1,
+		height: 2,
+		copyAttributesFrom: "D",
+		name: "wmap-papermapcopy",
+		output: { type: "item", code: "wmap:papermap-drawn", quantity: 1 }
+	}
+]

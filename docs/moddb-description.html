@@ -1,0 +1,50 @@
+<p><strong>Chart the world as you explore.</strong> World Map (Wmap) turns your world map and minimap into a nautical chart or a shaded terrain atlas. Follow coastlines, read the landscape, mark useful discoveries and carry your knowledge to other players on paper maps.</p>
+
+<p>With <a href="https://mods.vintagestory.at/earth">Earth</a>, zoom from whole continents down to a harbour and see distant terrain beyond your normal view distance. With <a href="https://mods.vintagestory.at/cylinderworld">Cylinder World</a>, scroll continuously east or west across the world's seam. Wmap also works on its own, mapping the terrain you visit.</p>
+
+<p><strong>Development release.</strong> World Map is still in development. Feedback and bug reports are welcome, especially for the distant-terrain prototype and multiplayer use.</p>
+
+<h2>Features</h2>
+<ul>
+  <li><strong>Two map styles:</strong> a parchment nautical chart with ink coastlines, contours, shallows and a compass rose, or a shaded terrain map with elevation and water depth. Earth supplies regional climate colours and mapped river courses.</li>
+  <li><strong>Exploration:</strong> your survival chart fills in as you travel. With shared predicted terrain available, exploration can follow what you can see over the landscape, accounting for the planet's curve. Otherwise, it charts a circle around you.</li>
+  <li><strong>Atlas and minimap:</strong> smooth zoom, a follow mode, player heading, waypoints and prospecting readings. Geographic worlds also show latitude and longitude, with an optional box beside the minimap that gives your coordinates, heading and local time. With <a href="https://mods.vintagestory.at/astraearth">Astra Terra for Earth</a> the local time is the solar time its sky follows, so noon is when the sun stands highest.</li>
+  <li><strong>Useful markers:</strong> place and edit the game's waypoints, filter prospecting readings by ore, and choose which marker layers to show. Optional automatic markers remember supported discoveries when you harvest them or look at them while sneaking.</li>
+  <li><strong>Paper map sharing:</strong> draw a snapshot of your discoveries, hand it to another player and let them choose what to copy into their atlas.</li>
+  <li><strong>Ore heat maps (Creative):</strong> colour the map by one ore, or by how many ores the prospecting pick would list, at every zoom, worked out once per world and stored. With Earth's regional ores they cover the whole planet; with vanilla ores, the regions the server has loaded.</li>
+  <li><strong>Distant horizons with Earth:</strong> predicted terrain extends beyond loaded chunks, up to 8,192 blocks by default. The experimental mid-distance view adds previously recorded terrain, simplified buildings and distant lights.</li>
+</ul>
+
+<h2>Paper maps</h2>
+<p>Craft a blank map from eight parchments around an ink and quill in the center; the quill is kept. Hold the map and right-click to name it and choose what to include: charted areas, recorded terrain, waypoints, automatic markers and prospecting readings.</p>
+<p>Another player can hold the drawn map and right-click to copy the parts they want. Their own recorded terrain takes priority, and duplicate waypoints and readings are skipped. A drawn map and a blank map in the crafting grid make another copy. Maps are snapshots of what you knew when you drew them.</p>
+
+<h2>Wind charts with Sea</h2>
+<p>With the optional <strong>Sea</strong> mod, carry a craftable <strong>Jonas barometer</strong> in your hotbar or backpack to see wind direction and strength worldwide on the atlas and minimap. Choose Weather now, Prevailing now, or January through December to inspect dominant winds throughout the year. These layers are available in survival while you carry the barometer, as well as in creative mode. On an Earth world the barometer also reads the air pressure where you stand and whether it is rising or falling: a falling glass comes before storms.</p>
+
+<h2>Getting started</h2>
+<ol>
+  <li>Install Wmap in your Mods folder. In multiplayer, install the <strong>same version on the server and every client</strong>.</li>
+  <li>Enter a world and press <strong>M</strong>, your remapped world-map key, or type <code>.wmap</code>. Type <code>.wmap vanilla</code> to open the original map.</li>
+  <li>Drag to pan, scroll to zoom and right-click to add or edit a waypoint. The atlas starts in <strong>Chart</strong>, centered on and following you at a local zoom. Use <strong>Whole world</strong> to zoom out, <strong>Follow</strong> to return to your position and <strong>Chart / Terrain</strong> to change style.</li>
+  <li>The minimap keeps its usual <strong>F6</strong> toggle and <strong>Ctrl+F6</strong> corner control. <strong>Ctrl+Shift+V</strong> toggles the coordinates, local time and heading.</li>
+</ol>
+<p>Built and development-tested with <strong>Vintage Story 1.22.7</strong>; the manifest minimum is 1.22.0. Earth, Cylinder World and Sea are optional for Wmap itself. Without Earth or Cylinder World, it uses recorded terrain. Cylinder World alone supplies an approximate continent map without real relief; <strong>distant terrain requires Earth</strong>. Fast Map is not required.</p>
+<p>On worlds with a prediction provider, the server prepares a world chart in the background on first use. Allow time for it to finish; the chart and close-up detail are cached for later sessions. Creative mode can reveal the whole predicted chart. Survival keeps unexplored areas hidden; servers can also grant the <code>wmap</code> privilege for creative atlas access.</p>
+
+<h2>Settings and servers</h2>
+<p>Under <strong>Customize → Earth</strong>, Wmap adds <strong>Wmap: shared world chart</strong> and <strong>Wmap: explore by sight</strong>. Both are on by default in new worlds. Restart the world or server after changing them. Existing worlds without these choices retain their <code>ModConfig/wmap.json</code> settings. The Earth mod is not required for these Wmap settings.</p>
+<p><strong>For servers that need to keep unexplored terrain secret:</strong> turn shared world charts off. When sharing is on, predicted terrain is sent to clients and hidden by the exploration display; a modified client could reveal it. With sharing off, ordinary players receive their own recorded terrain, and prediction-based distant terrain is unavailable to them.</p>
+<p>Advanced settings in <code>ModConfig/wmap.json</code> control exploration, styles, automatic markers, paper maps, winds, distant terrain and cache sizes. Set <code>PredictTerrain</code> to <code>false</code> to use recorded terrain with an unsupported terrain generator.</p>
+
+<p>The Jonas barometer and blank map also appear in the shared <strong>Earth+</strong> creative tab, below Everything.</p>
+
+<h2>Compatibility and development</h2>
+<p>Terra Prety and other terrain generators are not fully supported for prediction. Coexistence with Fast Map and other map replacements has not been play-tested. Automatic markers currently recognise supported base-game objects; coverage of other mods' resources is limited.</p>
+<p>Distant terrain is a simplified view, and recorded buildings update when you visit again. It cannot reproduce overhangs, thin structures, moving ships or creatures. Seasonal polar sea ice is not yet shown by season.</p>
+<p>Paper maps are available now. Sextant fixes, surveying, chart tables and route plotting remain planned features.</p>
+<p>For bug reports, include your game and mod versions, companion mods, map mode and style, relevant settings, a screenshot and a short reproduction. For geographic problems, include latitude and longitude.</p>
+
+<h2>AI use and licence</h2>
+<p><strong>AI disclaimer:</strong> All code in this mod was created using AI tools. The ideas and design are mine, and I have put extensive work into testing, refining and improving the mod.</p>
+<p>Licensed under GPL-3.0.</p>

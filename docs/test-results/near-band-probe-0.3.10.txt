@@ -1,0 +1,12 @@
+Near band probe: Nice coast L2 1t: 49 tiles 2082 ms (42.5 ms/tile, 0.75 M samples/s);
+Nice coast L2 4t: 49 tiles 2258 ms (46.1 ms/tile, 0.69 M samples/s);
+Nice coast L3 1t: 16 tiles 688 ms (43.0 ms/tile, 0.74 M samples/s);
+Nice coast L3 4t: 16 tiles 747 ms (46.7 ms/tile, 0.68 M samples/s);
+Alps L2 1t: 49 tiles 2140 ms (43.7 ms/tile, 0.73 M samples/s);
+Alps L2 4t: 49 tiles 2198 ms (44.9 ms/tile, 0.71 M samples/s);
+Alps L3 1t: 16 tiles 692 ms (43.3 ms/tile, 0.73 M samples/s);
+Alps L3 4t: 16 tiles 736 ms (46.0 ms/tile, 0.69 M samples/s);
+open Atlantic L2 1t: 49 tiles 1709 ms (34.9 ms/tile, 0.91 M samples/s);
+open Atlantic L2 4t: 49 tiles 2324 ms (47.4 ms/tile, 0.67 M samples/s);
+open Atlantic L3 1t: 16 tiles 571 ms (35.7 ms/tile, 0.89 M samples/s);
+open Atlantic L3 4t: 16 tiles 748 ms (46.8 ms/tile, 0.68 M samples/s)

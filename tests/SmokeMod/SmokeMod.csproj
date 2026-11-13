@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework><LangVersion>12</LangVersion><AssemblyName>WmapSmoke</AssemblyName>
+    <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences><GenerateDependencyFile>false</GenerateDependencyFile>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath><OutputPath>bin\$(Configuration)\mod\</OutputPath>
+    <NetCoreRuntimeDir>$([System.IO.Directory]::GetDirectories('$(NetCoreRoot)shared\Microsoft.NETCore.App', '10.*')[0])</NetCoreRuntimeDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="$(NetCoreRuntimeDir)\System.*.dll" Exclude="$(NetCoreRuntimeDir)\System.Private.*.dll;$(NetCoreRuntimeDir)\System.IO.Compression.Native.dll" Private="false" />
+    <Reference Include="$(NetCoreRuntimeDir)\System.Private.CoreLib.dll" Private="false" /><Reference Include="$(NetCoreRuntimeDir)\netstandard.dll" Private="false" /><Reference Include="$(NetCoreRuntimeDir)\mscorlib.dll" Private="false" />
+    <Reference Include="..\..\.local\game\VintagestoryAPI.dll" Private="false" />
+    <Reference Include="..\..\.local\game\VintagestoryLib.dll" Private="false" />
+    <Reference Include="..\..\.local\game\VSEssentials.dll" Private="false" />
+    <Reference Include="..\..\.local\game\VSSurvivalMod.dll" Private="false" />
+    <Reference Include="..\..\.local\game\OpenTK*.dll" Private="false" />
+    <Reference Include="..\..\.local\game\SkiaSharp.dll" Private="false" />
+    <Reference Include="..\..\.local\game\cairo-sharp.dll" Private="false" />
+    <Reference Include="..\..\.local\game\protobuf-net.dll" Private="false" />
+    <Reference Include="..\..\bin\Release\mod\Wmap.dll" Private="false" />
+    <None Update="modinfo.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

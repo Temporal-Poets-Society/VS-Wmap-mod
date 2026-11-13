@@ -1,0 +1,9 @@
+PASS
+Provider: Approximate cylinder continents
+Geometry: 25600 + 204800 x 102400; wraps=True
+Coordinates: 0° 00.0′ N  0° 00.0′ E
+World-view selected tiles: 91
+Sampled/encoded/rendered tiles: 28
+Compressed bytes: 56842
+Output: 800x400
+Elapsed ms: 10969

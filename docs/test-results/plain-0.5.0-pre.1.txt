@@ -1,0 +1,30 @@
+PASS
+Provider: Observed terrain only
+Geometry: 0 + 256000 x 102400; wraps=False
+Coordinates: none (planar world)
+World chart: none (no prediction provider)
+Elapsed ms: 21726
+Client pipeline: PASS (coarse levels from four-block samples, deferred samples while loading, fine-cell refresh, final-write order across quick reconnects, semantic network tiles, zoom/pan request reuse, unshared prediction isolation, development permission, recorded tile encoding/index, stale-world rejection, warm cache, reconnect persistence, quota preservation, corruption recovery, world chart transfer/verification/retry/disk reuse)
+Server permissions: PASS (ordinary gameplay, unshared prediction denial, shared world chart, privileged development, isolated manifests, survival denied (a host too) and creative granted the full map, AllowAllPlayers; chart-ready announcement after 100% bake progress; busy reply: not applicable (no predictions); chart flood capped at 8 chunks per tick and 32 pending, deduplicated; windowed download intact; three saturating players served 160/160/160 chunks)
+Far tile stream: PASS (old and new messages read each other; old manifests offer no far tiles and no teleporting; no prediction provider, stream checks skipped)
+Cache identity: PASS (stable across starts; PredictTerrain off keeps topology)
+Polar adapter: not applicable
+Seam band: not applicable
+Automatic markers: PASS (every pattern matches the game's blocks and creatures: berries 35, mushrooms 57, ores 235, beehives 14, resin 4, fruittrees 2, clay 6, translocators 12, traders 54)
+Jonas barometer: PASS (item, wind-instrument attribute, shape with 20 elements and 4 game textures, recipe with 7 resolved ingredients, English names)
+Paper maps: PASS (A drew 80.7 KiB from a 2-piece upload: 0.1 km² charted, 2 terrain tiles, 1 waypoints, 1 automatic markers, 1 prospecting readings; B read it in 4 pieces: own copies of the waypoint, automatic marker and reading, the charted area, 2 tiles merged keeping B's own cell; a second read added nothing; damaged upload and reading without the map refused; 2 recipes)
+Map key: PASS (atlas dispatch, remapped controls preserved, original-map fallback, cleanup)
+GUI composition: PASS (4 window/scale combinations, real AtlasDialog and Cairo, repeated open/close, recompose/disposal, opening-failure containment; creative right-click menu (opens, closes on a click elsewhere and Esc, its item teleports to the clicked point; none in survival); GPU upload simulated)
+Day and night: PASS (256x128 cells from the calendar in 6.5 ms; sun -76.5..-23.6 degrees at hour 1.0; 17 rows differ from the equator's (latitude), 0 equator cells differ from its first (longitude))
+Real-calendar day and night: PASS (no AstraTerra: one time of day for the whole world)
+  equinox (year 0.2226, hour 0.98): sun -75.2..-0.2 degrees; latitude bands only (52 distinct rows, at most 0.00 degrees across a row)
+  june (year 0.4726, hour 0.98): sun -61.1..23.2 degrees; latitude bands only (85 distinct rows, at most 0.00 degrees across a row)
+  december (year 0.9726, hour 0.98): sun -76.5..-23.6 degrees; latitude bands only (18 distinct rows, at most 0.00 degrees across a row)
+Line of sight: not applicable (no world chart or geography)
+Winds: SKIP (Sea not installed)
+GPU map: PASS (AMD Radeon RX 6600; production shader in an OpenGL 3.3 core context; world chart 1024x512 uploaded with full mipmaps in 1 steps, 35 ms; minified sea share 84% vs chart 84%; views: detail zoom: cached parent/child fallback, finer-level promotion, no fallback coarser than the chart, identical relief before/after chart arrival, immediate GPU reuse after CPU eviction/disk reload, changed-content invalidation, world-chart, world-terrain, world-daynight, day and night (day half 606 -> 606, night half 605 -> 343, terminator 1524 px), world-daynight-equinox, world-daynight-june, world-daynight-december, 3 real-calendar day and night maps, region-chart, region-terrain, local-chart (0 detail tiles), local-terrain (0 detail tiles), seam-chart, seam continuous, gameplay-chart, real GUI element: game projection, enabled culling, depth-tested dialog background, shared matrix getters; atlas/minimap arrows match game forward vector at four cardinal directions; later layers show through the marker's empty corners and over the wind arrows; the barometer field stays within its reach; Wmap minimap: style, exploration and HUD bounds, far terrain: 24 shader variants linked; 3 rings, 41985 vertices, 81920 triangles, 1.6 MiB; coast view 27200/27200 below horizon, 4 tones; sea edge: no sea in the synthetic chart; night: 5/255 between fog colours at daylight 0.063; noon: 107/255 between sky colours; twilight: 0/255 between a white and a red sun, 59/255 between ambients, seam: 158407 drawn, 0 differ, tile view (still: no selection in 200 frames; moved and replaced: selected again; 96 tiles drawn), biomeless far cache (49 tiles asked once, then 49 from disk), bounded east edge: map to the west, nothing beyond)
+
+Generated Earth polar and seam checks: not applicable
+Teleport: PASS (map x 7.3 lands on column 7, 52434; generated then loaded, y 203 above game:soil-low-normal)
+Water bed: PASS (generated bed 360 while untouched; raised to 361, dug out to 359 and a platform over water at 363 found by scanning; kelp to the surface is water)
+Mid-distance view: 96 program variants linked (farterrain, farcells, farcellmap, farlights); renders not applicable (no Earth prediction)

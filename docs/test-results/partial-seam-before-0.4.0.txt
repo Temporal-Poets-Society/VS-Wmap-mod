@@ -1,0 +1,3 @@
+FAIL: System.Exception: Near band: height steps 10.16 blocks across a partial seam tile, 3.61 across an ordinary tile edge
+   at FarTerrainChecks.<>c__DisplayClass2_1.<Run>g__NearBand|5() in C:\VS mods\Wmap\tests\SmokeMod\FarTerrainChecks.cs:line 449
+   at FarTerrainChecks.Run(String output, MapRenderer renderer, Topology t, AtlasInfo info, Func`3 locate, WorldSource source) in C:\VS mods\Wmap\tests\SmokeMod\FarTerrainChecks.cs:line 140

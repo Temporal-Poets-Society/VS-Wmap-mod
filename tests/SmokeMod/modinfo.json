@@ -1,0 +1,1 @@
+{"type":"code","modid":"wmapsmoke","name":"Wmap integration test","version":"1.0.0","side":"Server","dependencies":{"game":"1.22.0","wmap":"0.1.0"}}

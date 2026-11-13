@@ -1,0 +1,5 @@
+FAIL: System.Exception: World chart replaced detailed relief: mean channel difference 28.65
+   at DetailZoomChecks.Run(String output, Int32 width, Int32 height) in C:\VS mods\Wmap\tests\SmokeMod\DetailZoomChecks.cs:line 70
+   at GpuMapChecks.Run(String output, WorldSource source, BaseRaster raster, Func`3 geography, Func`3 locate) in C:\VS mods\Wmap\tests\SmokeMod\GpuMapChecks.cs:line 73
+   at Smoke.<>c__DisplayClass3_1.<StartServerSide>b__4() in C:\VS mods\Wmap\tests\SmokeMod\Smoke.cs:line 80
+Generated checks skipped after earlier failure

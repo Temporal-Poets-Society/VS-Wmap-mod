@@ -1,0 +1,43 @@
+{
+	code: "papermap",
+	class: "WmapPaperMap",
+	variantgroups: [
+		{ code: "state", states: ["blank", "drawn"] }
+	],
+	maxstacksizeByType: { "*-blank": 16, "*-drawn": 1 },
+	materialDensity: 210,
+	shape: { base: "game:item/lore/map-treasure" },
+	texturesByType: {
+		"*-blank": {
+			"map-blank": { base: "game:item/lore/map-blank" },
+			"map-treasures": { base: "game:item/lore/map-blank" }
+		},
+		"*-drawn": {
+			"map-blank": { base: "game:item/lore/map-blank" },
+			"map-treasures": { base: "game:item/lore/map1" }
+		}
+	},
+	attributes: {
+		displaycaseable: true,
+		shelvable: true,
+		handbook: { extraSections: [{ title: "wmap:handbook-papermap-title", text: "wmap:handbook-papermap-text" }] }
+	},
+	creativeinventoryByType: { "*-blank": { "general": ["*"], "earthplus": ["*"], "items": ["*"] } },
+	guiTransform: {
+		translation: { x: 0, y: 0, z: 0 },
+		rotation: { x: 13, y: -39, z: -163 },
+		origin: { x: 0.43, y: 0.57, z: 0.46 },
+		scaleXyz: { x: -1.3, y: 1.3, z: 1.3 }
+	},
+	groundTransform: {
+		translation: { x: 0, y: 0, z: 0 },
+		rotation: { x: -65, y: 0, z: 0 },
+		origin: { x: 0.5, y: 0, z: 0.5 },
+		scale: 1.62
+	},
+	tpHandTransform: {
+		translation: { x: -1.3, y: -0.7, z: -1.2 },
+		rotation: { x: -57, y: -165, z: 92 },
+		origin: { x: 0.4, y: 0.2, z: 0.4 }
+	}
+}

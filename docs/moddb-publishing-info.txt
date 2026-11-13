@@ -1,0 +1,73 @@
+WORLD MAP (WMAP) - MOD DB PAGE DRAFT FOR THE NEXT RELEASE
+Updated 13 November 2026 (WM-0012). First prepared 31 October 2026 for 0.5.0.
+The author keeps World Map in development (0.x); publishing is the author's, nothing here is uploaded.
+
+STILL OPEN BEFORE UPLOAD (the author's choices)
+- Version: the next release after 0.5.1 (main carries 0.5.3-rc.1; the coordinator builds the next RC).
+  Fill in the version, zip name, SHA-256 and size below once it is built.
+- Source link: the repository andrisberzins-1/VS-Wmap-mod is private. Either make it public, or attach the
+  matching source ZIP to each release (GPL-3.0 needs the source offered with the binary).
+- Issue link: there is no public issue tracker. Options: the repository's issues once it is public, or the Mod DB
+  page's comments. Leave the field empty until one is chosen.
+- Gallery: candidates from the AgentBridge bench are in docs/publishing-assets/gallery/ (see GALLERY). Retake
+  in the author's own game where a capture shows a bench artefact (the "Need help" tip at the left edge).
+- The URL alias "wmap" is not checked.
+- The description links Astra Terra for Earth at mods.vintagestory.at/astraearth, its prepared alias; that page
+  is not uploaded yet. Check the link (and the Earth and Cylinder World ones) before publishing.
+
+FORM FIELDS
+Name: World Map
+Category: Game Mod
+URL alias: wmap, if available (not checked)
+Suggested tags: Map, Mapping, Travel & Exploration, Graphics
+Side: Client and Server side mod
+Author: Andris (the manifest's author since 0.5.1)
+Mod ID: wmap
+Licence: GPL-3.0 (repository LICENSE, included in the mod ZIP)
+
+Summary:
+A world atlas with nautical and terrain maps, exploration, paper map sharing and distant horizons.
+
+DESCRIPTION
+Paste docs/moddb-description.html into the description editor's Source code view.
+It includes the author's AI disclosure and licence wording.
+Logo: docs/moddb-logo.png (480 x 320); source: docs/moddb-logo-source.md.
+
+RELEASE FILE
+Version: (next release; fill in)
+Game checked: Vintage Story 1.22.7 (the version the suite builds and tests against, 13 November 2026)
+Manifest minimum: game 1.22.0; no compatibility claim for other game versions.
+Required on client: yes. Required on server: yes. Client and server need the same version (network
+format changed in 0.5.2).
+Required companion mods: none
+Optional: Earth (predictions, far terrain, air pressure), Cylinder World (wrapping geography),
+Sea (wind charts), Astra Terra for Earth (local solar time in the coordinates box).
+Tested together on the bench, 13 November 2026: Earth 2.0.0-rc.9, Cylinder World 1.1.0-rc.3,
+Hydrology 0.6.2-rc.6, Sea 0.6.0-rc.1, Astra Terra for Earth 0.15.0-dev.25. These are test builds; name only
+released versions on the page.
+Install companion mods' own dependencies when using them.
+Runtime ZIP: release/wmap_<version>.zip
+Matching source ZIP: (to be made with the release)
+Runtime SHA-256 / size: (fill in)
+
+RELEASE NOTE (draft: everything since 0.5.1)
+World Map <version> is a development release.
+- Ore heat maps on the Creative map: colour the map by one ore, or by how many ores the prospecting pick
+  would list, at every zoom; stored per world. With Earth's regional ores they work anywhere on the planet.
+- The coordinates box beside the minimap shows the local time; with Astra Terra for Earth it is the local
+  solar time its sky follows. On worlds without geography the box shows the time alone.
+- With Earth, the Jonas barometer reads the air pressure where you stand and whether it is rising or falling.
+- A new Earth world on full GLO-90 heights no longer waits about two minutes for the climate colours.
+- Big rivers no longer get a second, darker river beside them; grid labels follow the degree format.
+Client and server need this same version.
+
+GALLERY
+Use actual game captures. The cylinder logo is artwork, not a game capture.
+Candidates (1280 x 800, from the bench, 13 November 2026), in docs/publishing-assets/gallery/:
+- atlas-chart-gulf-of-riga.jpg: the Chart style at Riga with weather-now winds; the position line shows the
+  wind and the barometer's pressure.
+- atlas-whole-world-winds.jpg: the whole Earth in the Chart style with worldwide winds.
+- alps-minimap-coordinates.jpg: flying over the Alps with the minimap and the coordinates box (latitude,
+  longitude, local time, heading).
+Still wanted: the Terrain style on a coast; the explored survival minimap; distant terrain at the horizon;
+drawing and reading a paper map; two months of prevailing winds; an ore heat map.

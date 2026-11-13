@@ -1,0 +1,2 @@
+FAIL: System.Exception: Far terrain at night takes the fog colour: up to 41/255 between a black and a brown fog colour (daylight 0.063)
+   at FarTerrainChecks.Run(String output, MapRenderer renderer, Topology t, AtlasInfo info, Func`3 locate, WorldSource source) in C:\VS mods\Wmap\tests\SmokeMod\FarTerrainChecks.cs:line 147

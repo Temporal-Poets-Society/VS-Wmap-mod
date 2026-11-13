@@ -1,0 +1,6 @@
+FAIL: System.Exception: Near band: water drawn above its level: the far sea climbs the coast in 9 of 119161 sea pixels (more than 3 blocks above the sea, up to 7.9); river lines hang above their valleys in 0 of 8 pixels more than 3 blocks up (more than 6 blocks above the valley floor, up to 0.0)
+   at FarTerrainChecks.<>c__DisplayClass2_1.<Run>g__NearBand|5() in C:\VS mods\Wmap\.claude\worktrees\far-sea-coast\tests\SmokeMod\FarTerrainChecks.cs:line 502
+   at FarTerrainChecks.Run(String output, MapRenderer renderer, Topology t, AtlasInfo info, Func`3 locate, WorldSource source) in C:\VS mods\Wmap\.claude\worktrees\far-sea-coast\tests\SmokeMod\FarTerrainChecks.cs:line 226
+   at GpuMapChecks.Run(String output, WorldSource source, BaseRaster raster, Func`3 geography, Func`3 locate, Single[] winds, Nullable`1 barometer, IReadOnlyList`1 sunMaps) in C:\VS mods\Wmap\.claude\worktrees\far-sea-coast\tests\SmokeMod\GpuMapChecks.cs:line 315
+   at Smoke.<>c__DisplayClass3_1.<StartServerSide>b__4() in C:\VS mods\Wmap\.claude\worktrees\far-sea-coast\tests\SmokeMod\Smoke.cs:line 122
+Generated checks skipped after earlier failure

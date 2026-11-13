@@ -1,0 +1,6 @@
+bin/
+obj/
+.local/
+release/
+tests/**/bin/
+tests/**/obj/

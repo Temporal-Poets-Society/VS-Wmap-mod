@@ -1,0 +1,26 @@
+PASS
+Provider: Earth terrain prediction + Earth polar ice/walls
+Geometry: 25600 + 204800 x 102400; wraps=True
+Coordinates: 0° 00.0′ N  14° 09.2′ E
+World chart: 8192x4096 texels (25 blocks each), 16 threads, bake 73.2 s, pack 0.9 s (12.4 MiB), unpack 0.2 s; land 33.4%, ice 18.3%, river texels 164526, 829383 river segments
+Elapsed ms: 107215
+Client pipeline: PASS (semantic network tiles, zoom/pan request reuse, unshared prediction isolation, development permission, recorded tile encoding/index, stale-world rejection, warm cache, reconnect persistence, quota preservation, corruption recovery, world chart transfer/verification/retry/disk reuse)
+Server permissions: PASS (ordinary gameplay, unshared prediction denial, shared world chart, privileged development, isolated manifests, AllowAllPlayers; chart-ready announcement after 100% bake progress; chart flood capped at 8 chunks per tick and 32 pending, deduplicated; windowed download intact; three saturating players served 160/160/160 chunks)
+Cache identity: PASS (stable across starts and sea-ice dates; FlattenSeabed changes it; PredictTerrain off keeps topology)
+Polar adapter: Earth mode (both wall tops checked; generated-chunk comparisons follow)
+Jonas barometer: PASS (item, wind-instrument attribute, shape with 20 elements and 4 game textures, recipe with 7 resolved ingredients, English names)
+Map key: PASS (atlas dispatch, remapped controls preserved, original-map fallback, cleanup)
+GUI composition: PASS (4 window/scale combinations, real AtlasDialog and Cairo, repeated open/close, recompose/disposal, opening-failure containment; GPU upload simulated)
+Winds: PASS (Sea Earthlike; belt at the equator "the trade winds"; 512x256 grid: prevailing 5 ms, weather 106 ms, strongest weather 1.50; barometer field 96x96 in 5 ms; 15°N January from ENE 0.28, 48°N from W 0.26, 15°S from ESE 0.26, 30°N January from WSW 0.21 / July from ENE 0.30)
+GPU map: PASS (AMD Radeon RX 6600; production shader in an OpenGL 3.3 core context; world chart 8192x4096 uploaded with full mipmaps in 6 steps, 55 ms; minified sea share 67% vs chart 67%; views: detail zoom: cached parent/child fallback, finer-level promotion, no fallback coarser than the chart, identical relief before/after chart arrival, immediate GPU reuse after CPU eviction/disk reload, changed-content invalidation, world-chart, world-terrain, winds-world-chart, winds-world-terrain, winds-region-chart, winds (52368 pixels, 3934 ink), region-chart, region-terrain, local-chart (240 detail tiles), local-terrain (240 detail tiles), seam-chart, seam continuous, gameplay-chart, barometer-gameplay-chart, barometer field, real GUI element: game projection, enabled culling, depth-tested dialog background, shared matrix getters; atlas/minimap arrows match game forward vector at four cardinal directions; later layers show through the marker's empty corners and over the wind arrows; the barometer field stays within its reach; Wmap minimap: style, exploration and HUD bounds, far terrain: 24 shader variants linked; 3 rings, 41985 vertices, 81920 triangles, 1.6 MiB; coast view 27200/27200 below horizon, 34 tones, seam: 161638 drawn, 0 differ, bounded east edge: map to the west, nothing beyond)
+
+Generated polar terrain: PASS (576 columns, 9 locations, including 64 Arctic ice columns beyond the old strip)
+  north wall: 0/64 ice columns; max terrain-height error 0; snow cover up to 0; mismatches 0
+  north border ice: 64/64 ice columns; max terrain-height error 0; snow cover up to 0; mismatches 0
+  Arctic beyond old strip: 64/64 ice columns; max terrain-height error 0; snow cover up to 0; mismatches 0
+  Arctic Atlantic margin: 0/64 ice columns; max terrain-height error 0; snow cover up to 0; mismatches 0
+  Greenland: 64/64 ice columns; max terrain-height error 0; snow cover up to 2; mismatches 0
+  Antarctic plateau: 64/64 ice columns; max terrain-height error 0; snow cover up to 2; mismatches 0
+  Antarctic peninsula: 64/64 ice columns; max terrain-height error 0; snow cover up to 2; mismatches 0
+  south border: 64/64 ice columns; max terrain-height error 0; snow cover up to 2; mismatches 0
+  south wall: 0/64 ice columns; max terrain-height error 0; snow cover up to 0; mismatches 0

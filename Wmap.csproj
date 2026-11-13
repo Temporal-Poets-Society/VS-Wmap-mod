@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>Wmap</AssemblyName>
+    <RootNamespace>Wmap</RootNamespace>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>bin\$(Configuration)\mod\</OutputPath>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <GameReferences Condition="'$(GameReferences)' == ''">$(MSBuildProjectDirectory)\.local\game</GameReferences>
+    <!-- The installed VS 1.22 uses .NET 10. The available SDK is 8; use the installed runtime's reference surface. -->
+    <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>
+    <ModVersion>0.5.3-rc.3</ModVersion>
+    <Version>$(ModVersion)</Version>
+    <NetCoreRuntimeDir>$([System.IO.Directory]::GetDirectories('$(NetCoreRoot)shared\Microsoft.NETCore.App', '10.*')[0])</NetCoreRuntimeDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="src\**\*.cs" />
+    <Reference Include="$(NetCoreRuntimeDir)\System.*.dll" Exclude="$(NetCoreRuntimeDir)\System.Private.*.dll;$(NetCoreRuntimeDir)\System.IO.Compression.Native.dll" Private="false" />
+    <Reference Include="$(NetCoreRuntimeDir)\System.Private.CoreLib.dll" Private="false" />
+    <Reference Include="$(NetCoreRuntimeDir)\netstandard.dll" Private="false" />
+    <Reference Include="$(NetCoreRuntimeDir)\mscorlib.dll" Private="false" />
+    <Reference Include="$(GameReferences)\VintagestoryAPI.dll" Private="false" />
+    <Reference Include="$(GameReferences)\VSEssentials.dll" Private="false" />
+    <Reference Include="$(GameReferences)\VSSurvivalMod.dll" Private="false" />
+    <Reference Include="$(GameReferences)\cairo-sharp.dll" Private="false" />
+    <Reference Include="$(GameReferences)\Newtonsoft.Json.dll" Private="false" />
+    <Reference Include="$(GameReferences)\protobuf-net.dll" Private="false" />
+    <Reference Include="$(GameReferences)\OpenTK.Graphics.dll" Private="false" />
+    <Reference Include="$(GameReferences)\OpenTK.Core.dll" Private="false" />
+    <Reference Include="$(GameReferences)\OpenTK.Mathematics.dll" Private="false" />
+    <EmbeddedResource Include="src\Client\Shaders\*" LogicalName="Wmap.Shaders.%(Filename)%(Extension)" />
+    <None Include="modinfo.json;worldconfig.json;assets\**\*;CHANGELOG.md;README.md;LICENSE" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="PackageMod" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
+    <MakeDir Directories="$(MSBuildProjectDirectory)\release" />
+    <ZipDirectory SourceDirectory="$(OutputPath)" DestinationFile="$(MSBuildProjectDirectory)\release\wmap_$(ModVersion).zip" Overwrite="true" />
+  </Target>
+</Project>

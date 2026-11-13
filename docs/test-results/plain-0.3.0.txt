@@ -1,0 +1,14 @@
+PASS
+Provider: Observed terrain only
+Geometry: 0 + 256000 x 102400; wraps=False
+Coordinates: none (planar world)
+World chart: none (no prediction provider)
+Elapsed ms: 10298
+Client pipeline: PASS (semantic network tiles, zoom/pan request reuse, unshared prediction isolation, development permission, recorded tile encoding/index, stale-world rejection, warm cache, reconnect persistence, quota preservation, corruption recovery, world chart transfer/verification/retry/disk reuse)
+Server permissions: PASS (ordinary gameplay, unshared prediction denial, shared world chart, privileged development, isolated manifests, AllowAllPlayers)
+Polar adapter: not applicable
+Map key: PASS (atlas dispatch, remapped controls preserved, original-map fallback, cleanup)
+GUI composition: PASS (4 window/scale combinations, real AtlasDialog and Cairo, repeated open/close, recompose/disposal, opening-failure containment; GPU upload simulated)
+GPU map: PASS (AMD Radeon RX 6600; production shader in an OpenGL 3.3 core context; world chart 1024x512 uploaded with full mipmaps in 1 steps, 41 ms; minified sea share 84% vs chart 84%; views: world-chart, world-terrain, region-chart, region-terrain, local-chart (0 detail tiles), local-terrain (0 detail tiles), seam-chart, seam continuous, gameplay-chart)
+
+Generated Earth polar checks: not applicable

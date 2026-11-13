@@ -1,0 +1,16 @@
+[
+	{
+		ingredientPattern: "BGB,OVS,_T_",
+		ingredients: {
+			"B": { type: "item", code: "game:ingot-brass" },
+			"G": { type: "block", code: "game:glass-plain" },
+			"O": { type: "item", code: "game:jonasframes-oscillator01" },
+			"V": { type: "item", code: "game:jonasparts-valve01" },
+			"S": { type: "item", code: "game:jonasframes-spring01" },
+			"T": { type: "item", code: "game:gear-temporal" }
+		},
+		width: 3,
+		height: 3,
+		output: { type: "item", code: "wmap:jonasbarometer", quantity: 1 }
+	}
+]

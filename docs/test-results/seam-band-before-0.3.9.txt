@@ -1,0 +1,4 @@
+FAIL: System.Exception: Layout 10: x=0.25 z=48198.7 natural 195: predicted 125+39 kind 2, Cylinder SeamGround 124
+   at SeamBandChecks.Run(ICoreServerAPI api) in C:\VS mods\Wmap\tests\SmokeMod\SeamBandChecks.cs:line 49
+   at Smoke.<>c__DisplayClass3_1.<StartServerSide>b__4() in C:\VS mods\Wmap\tests\SmokeMod\Smoke.cs:line 81
+Generated checks skipped after earlier failure

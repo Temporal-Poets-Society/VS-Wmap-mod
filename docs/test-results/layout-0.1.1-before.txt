@@ -1,0 +1,7 @@
+FAIL: System.ArgumentException: x2 must be largner than x1, and y2 must be larger than y1
+   at Cairo.SurfaceTransformBlur.BlurPartial(ImageSurface surface, Double range, Int32 blurOnlyEdgeWidth, Int32 x1, Int32 y1, Int32 x2, Int32 y2) in C:\Users\office-desktop2\Documents\game\Cairo\util\SurfaceTransformBlur.cs:line 26
+   at Vintagestory.API.Client.GuiElementDialogBackground.ComposeElements(Context ctx, ImageSurface surface) in C:\Users\office-desktop2\Documents\game\VintagestoryApi\Client\UI\Elements\Impl\Static\GuiElementDialogBackground.cs:line 56
+   at Vintagestory.API.Client.GuiComposer.Compose(Boolean focusFirstElement) in C:\Users\office-desktop2\Documents\game\VintagestoryApi\Client\UI\GuiComposer.cs:line 402
+   at Wmap.Client.AtlasDialog..ctor(ICoreClientAPI api, TileClient tiles, WmapConfig config) in C:\VS mods\Wmap\src\Client\AtlasDialog.cs:line 31
+   at DialogChecks.Run(String output, ILogger logger) in C:\VS mods\Wmap\tests\SmokeMod\DialogChecks.cs:line 86
+   at Smoke.<>c__DisplayClass2_1.<StartServerSide>b__2() in C:\VS mods\Wmap\tests\SmokeMod\Smoke.cs:line 74

@@ -1,0 +1,4 @@
+FAIL: System.Exception: Full-zoom river drawn twice: 7192 pixels of the world chart's river channel beside 104099 of the tile's water
+   at GpuMapChecks.Run(String output, WorldSource source, BaseRaster raster, Func`3 geography, Func`3 locate, Single[] winds, Nullable`1 barometer) in C:\VS mods\Wmap\tests\SmokeMod\GpuMapChecks.cs:line 179
+   at Smoke.<>c__DisplayClass3_1.<StartServerSide>b__4() in C:\VS mods\Wmap\tests\SmokeMod\Smoke.cs:line 88
+Generated checks skipped after earlier failure

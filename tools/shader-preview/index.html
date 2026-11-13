@@ -1,0 +1,192 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Wmap shader preview</title>
+<style>html,body{margin:0;height:100%;background:#222;overflow:hidden;font:12px sans-serif;color:#ddd}canvas{display:block;width:100%;height:100%}#hud{position:fixed;left:8px;top:6px;background:#0008;padding:4px 8px;border-radius:4px}</style>
+</head><body><canvas id="c"></canvas><div id="hud">loading…</div>
+<script>
+// World size in blocks (URL: #world=204800x102400); raster size comes from the server.
+const params = new URLSearchParams(location.hash.slice(1));
+const [W, H] = (params.get('world') ?? '204800x102400').split('x').map(Number);
+let BW = 0, BH = 0, TEXEL = 0;
+let cam = { x: +(params.get('x') ?? W / 2), z: +(params.get('z') ?? H / 2), s: +(params.get('s') ?? 0) };
+let style = +(params.get('style') ?? 0), dev = +(params.get('dev') ?? 1), gui = +(params.get('gui') ?? 1);
+let month = +(params.get('wind') ?? -1);   // -1 no wind layer, 0..11 prevailing wind of that month
+const canvas = document.getElementById('c'), hud = document.getElementById('hud');
+const gl = canvas.getContext('webgl2', { antialias: false, preserveDrawingBuffer: true });
+gl.getExtension('OES_texture_float_linear'); gl.getExtension('EXT_color_buffer_float');
+const header = '#version 300 es\nprecision highp float;\nprecision highp int;\nprecision highp sampler2D;\n';
+
+async function text(u) { return (await fetch(u)).text(); }
+function compile(type, src) {
+  const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { const log = gl.getShaderInfoLog(s); hud.textContent = log; throw new Error(log); }
+  return s;
+}
+let prog, loc = {};
+async function build() {
+  const vs = (await text('/shaders/map.vert')).replace(/layout\(location = 0\) /, 'layout(location = 0) ');
+  const fs = await text('/shaders/map.frag');
+  const p = gl.createProgram();
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, header + vs)); gl.attachShader(p, compile(gl.FRAGMENT_SHADER, header + fs));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) { hud.textContent = gl.getProgramInfoLog(p); throw new Error(gl.getProgramInfoLog(p)); }
+  prog = p; loc = {};
+  const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+  for (let i = 0; i < n; i++) { const u = gl.getActiveUniform(p, i); loc[u.name] = gl.getUniformLocation(p, u.name); }
+}
+function tex(unit, target = gl.TEXTURE_2D) { const t = gl.createTexture(); gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(target, t); return t; }
+let base, mask, geo, dummy, climate = null;
+async function loadWorld() {
+  const info = await (await fetch('/raster-info')).json();
+  BW = info.width; BH = info.height; TEXEL = W / BW;
+  if (info.climateWidth > 0) {
+    // Terrain colours by climate: forest, temperature, rain (Core/ClimateRaster.cs).
+    const c = await fetch('/climate');
+    const cbuf = await new Response(c.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+    climate = tex(6);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, info.climateWidth, info.climateHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(cbuf));
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  }
+  const r = await fetch('/raster');
+  const buf = await new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+  base = tex(0);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, BW, BH, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(buf));
+  gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+}
+const CENTER_LON = +(params.get('center') ?? 10.75);   // Earth Map's world centre meridian (seam 169.25°W, Earth 0.15.3)
+function lonlat(lon, lat) { return [((lon - CENTER_LON + 540) % 360) / 360 * W, (90 - lat) / 180 * H]; }
+function makeMask() {
+  // A synthetic voyage for gameplay mode (D): Biscay to the Caribbean, longitudes relative to the centre meridian.
+  const MW = 3200, MH = 1600, c = new OffscreenCanvas(MW, MH), g = c.getContext('2d');
+  g.fillStyle = '#000'; g.fillRect(0, 0, MW, MH);
+  g.strokeStyle = '#fff'; g.lineCap = 'round'; g.lineJoin = 'round'; g.filter = 'blur(2px)';
+  const voyage = [[-1.5, 50.5], [-5, 48.3], [-9.5, 43], [-9.5, 38.7], [-9, 35], [-13.5, 28.5], [-17, 20], [-25, 16], [-45, 15], [-61, 14.5], [-66, 18.2], [-72, 21], [-80, 25.2], [-79, 31], [-75.5, 35.2], [-74, 40.5], [-70, 42]];
+  g.lineWidth = 9; g.beginPath();
+  const k = W / MW;
+  voyage.forEach(([lo, la], i) => { const [x, z] = lonlat(lo, la); i ? g.lineTo(x / k, z / k) : g.moveTo(x / k, z / k); });
+  g.stroke();
+  const [hx, hz] = lonlat(7.8, 48.6); g.fillStyle = '#fff'; g.beginPath(); g.arc(hx / k, hz / k, 40, 0, 7); g.fill();
+  const data = g.getImageData(0, 0, MW, MH).data, r8 = new Uint8Array(MW * MH);
+  for (let i = 0; i < r8.length; i++) r8[i] = data[i * 4];
+  mask = tex(1);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, MW, MH, 0, gl.RED, gl.UNSIGNED_BYTE, r8);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+}
+function makeGeo() {
+  const GW = 1024, GH = 512, f = new Float32Array(GW * GH * 4);
+  for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+    const i = (y * GW + x) * 4; f[i] = (x + 0.5) / GW * 360 - 180 + CENTER_LON; f[i + 1] = 90 - (y + 0.5) / GH * 180; f[i + 2] = 0;
+  }
+  geo = tex(2);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, GW, GH, 0, gl.RGBA, gl.FLOAT, f);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  dummy = tex(3); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
+}
+// Sea's prevailing belts (Sea/src/Wind/WindModel.cs): |latitude|, eastward, poleward; shifted north in northern summer.
+const BELTS = [[0,-.10,0],[5,-.20,-.10],[10,-.30,-.15],[15,-.33,-.14],[22,-.28,-.10],[28,-.12,-.03],[32,0,0],[38,.20,.06],[45,.34,.10],[52,.36,.08],[58,.22,.04],[64,0,0],[70,-.15,-.05],[80,-.20,-.05],[90,-.10,0]];
+const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+function belt(lat, m) {
+  lat -= 8 * Math.sin(2 * Math.PI * ((m + 0.5) / 12 - 0.3));
+  const a = Math.min(90, Math.abs(lat)), hs = lat >= 0 ? 1 : -1;
+  let i = 0; while (i < BELTS.length - 2 && a > BELTS[i + 1][0]) i++;
+  const t = smooth(BELTS[i][0], BELTS[i + 1][0], a);
+  let east = BELTS[i][1] + (BELTS[i + 1][1] - BELTS[i][1]) * t, pole = BELTS[i][2] + (BELTS[i + 1][2] - BELTS[i][2]) * t;
+  if (hs < 0) { const f = 1 + 0.25 * smooth(36, 42, a) * (1 - smooth(55, 62, a)); east *= f; pole *= f; }
+  return [east, -pole * hs];
+}
+let wind;
+function makeWind() {
+  const WW = 512, WH = 256, f = new Float32Array(WW * WH * 2);
+  for (let y = 0; y < WH; y++) { const [e, s] = belt(90 - (y + 0.5) / WH * 180, Math.max(0, month)); for (let x = 0; x < WW; x++) { f[(y * WW + x) * 2] = e; f[(y * WW + x) * 2 + 1] = s; } }
+  wind ??= gl.createTexture();
+  gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, wind);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG32F, WW, WH, 0, gl.RG, gl.FLOAT, f);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+}
+const vbo = gl.createBuffer(), vao = gl.createVertexArray();
+function quad(x, y, w, h) {
+  gl.bindVertexArray(vao); gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([x, y, x + w, y, x + w, y + h, x, y, x + w, y + h, x, y + h]), gl.STREAM_DRAW);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+}
+function gratStep(pxPerDeg, min) { for (const s of [1, 2, 5, 10, 15, 30, 45]) if (s * pxPerDeg >= min) return s; return 90; }
+function draw() {
+  const w = canvas.width = canvas.clientWidth * devicePixelRatio, h = canvas.height = canvas.clientHeight * devicePixelRatio;
+  if (!cam.s) cam.s = Math.min(w / W, h / H) * 0.96;
+  gl.viewport(0, 0, w, h); gl.clearColor(0.1, 0.1, 0.1, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.useProgram(prog);
+  const proj = [2 / w, 0, 0, 0, 0, -2 / h, 0, 0, 0, 0, 1, 0, -1, 1, 0, 1];
+  gl.uniformMatrix4fv(loc.uProj, false, proj); gl.uniformMatrix4fv(loc.uView, false, [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  gl.uniform1f(loc.uDepth, 0);
+  const vx = 20, vy = 20, vw = w - 40, vh = h - 40;
+  gl.uniform4f(loc.uViewport, vx, vy, vw, vh);
+  gl.uniform4f(loc.uCamera, cam.s, gui * devicePixelRatio, 0, 0);
+  const u = (((cam.x / W) % 1) + 1) % 1;
+  gl.uniform2f(loc.uCamUV, u, cam.z / H);
+  const period = 4096 / Math.pow(2, Math.floor(Math.log2(cam.s)));
+  gl.uniform2f(loc.uAnchor, cam.x - Math.floor(cam.x / period) * period, cam.z - Math.floor(cam.z / period) * period);
+  gl.uniform4f(loc.uWorld, W, H, 1, dev);
+  gl.uniform1i(loc.uStyle, style);
+  gl.uniform1f(loc.uHeightScale, +(params.get('heights') ?? 219));   // map height minus sea level
+  gl.uniform4f(loc.uBaseInfo, 1, TEXEL, BW, BH);
+  gl.uniform4f(loc.uMaskInfo, dev ? 0 : 1, 64, 3200, 1600);
+  const ppd = W / 360 * cam.s;
+  gl.uniform4f(loc.uGeoInfo, 1, gratStep(ppd, 110 * devicePixelRatio), gratStep(ppd, 110 * devicePixelRatio), 0);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, base); gl.uniform1i(loc.uBase, 0);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, mask); gl.uniform1i(loc.uMask, 1);
+  gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, geo); gl.uniform1i(loc.uGeo, 2);
+  gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, dummy); gl.uniform1i(loc.uTile, 3);
+  gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_2D, climate || dummy); gl.uniform1i(loc.uClimate, 6);
+  gl.uniform4f(loc.uClimateInfo, climate ? 1 : 0, 0, 0, 0);
+  gl.uniform1i(loc.uMode, 0); quad(vx, vy, vw, vh);
+  // Player marker near the Strait of Gibraltar heading west-southwest.
+  const [plx, plz] = lonlat(-9.3, 38.6);
+  const sx = vx + vw / 2 + (plx - cam.x) * cam.s, sy = vy + vh / 2 + (plz - cam.z) * cam.s, mr = 11 * devicePixelRatio;
+  gl.uniform4f(loc.uMarkerColor, -1, 0, 0, 1);
+  gl.uniform4f(loc.uMarker, sx, sy, -1.9, mr); gl.uniform1i(loc.uMode, 2); quad(sx - mr * 1.4, sy - mr * 1.4, mr * 2.8, mr * 2.8);
+  if (month >= 0) {
+    gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, wind); gl.uniform1i(loc.uWind, 4);
+    gl.uniform4f(loc.uWindInfo, 1, 64 * gui * devicePixelRatio, 1, 0); gl.uniform1i(loc.uMode, 4); quad(vx, vy, vw, vh);
+  }
+  const cr = 62 * devicePixelRatio, cx = vx + 30 * devicePixelRatio + cr, cy = vy + vh - 30 * devicePixelRatio - cr;
+  gl.uniform4f(loc.uMarker, cx, cy, 0, cr); gl.uniform1i(loc.uMode, 3); quad(cx - cr - 2, cy - cr - 2, cr * 2 + 4, cr * 2 + 4);
+  hud.textContent = `${(1 / cam.s).toFixed(1)} blocks/px · ${style ? 'terrain' : 'chart'} · ${dev ? 'development' : 'gameplay'} · ${month >= 0 ? 'winds month ' + (month + 1) : 'no winds'} · drag, wheel · S style · D mode · W winds · [ ] month · R reload shader`;
+  location.hash = `world=${W}x${H}&x=${cam.x.toFixed(0)}&z=${cam.z.toFixed(0)}&s=${cam.s.toPrecision(4)}&style=${style}&dev=${dev}&gui=${gui}&wind=${month}`;
+}
+let drag = null;
+canvas.onmousedown = e => drag = [e.clientX, e.clientY];
+onmouseup = () => drag = null;
+onmousemove = e => { if (!drag) return; cam.x -= (e.clientX - drag[0]) * devicePixelRatio / cam.s; cam.z -= (e.clientY - drag[1]) * devicePixelRatio / cam.s; drag = [e.clientX, e.clientY]; draw(); };
+canvas.onwheel = e => {
+  e.preventDefault();
+  const r = canvas.getBoundingClientRect(), mx = (e.clientX - r.left) * devicePixelRatio - canvas.width / 2, my = (e.clientY - r.top) * devicePixelRatio - canvas.height / 2;
+  const old = cam.s; cam.s = Math.min(8, Math.max(0.002, cam.s * Math.pow(1.25, -Math.sign(e.deltaY))));
+  cam.x += mx * (1 / old - 1 / cam.s); cam.z += my * (1 / old - 1 / cam.s); draw();
+};
+onkeydown = async e => {
+  if (e.key === 's') style ^= 1; if (e.key === 'd') dev ^= 1; if (e.key === 'r') await build();
+  if (e.key === 'w') { month = month < 0 ? 0 : -1; makeWind(); }
+  if (e.key === '[' || e.key === ']') { month = ((Math.max(0, month) + (e.key === ']' ? 1 : 11)) % 12); makeWind(); }
+  draw();
+};
+onresize = draw;
+window.setView = (x, z, s, st, d, m = month) => { cam = { x, z, s }; style = st; dev = d; month = m; makeWind(); draw(); return 'ok'; };
+(async () => { await build(); makeGeo(); makeMask(); makeWind(); await loadWorld(); draw(); window.ready = true; })().catch(e => hud.textContent = e.stack || e);
+</script></body></html>

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <UseAppHost>false</UseAppHost><NoWarn>CA1416</NoWarn><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><LangVersion>12</LangVersion>
+    <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>
+    <RuntimeFrameworkVersion>10.0.0</RuntimeFrameworkVersion><RollForward>LatestPatch</RollForward>
+    <NetCoreRuntimeDir>$([System.IO.Directory]::GetDirectories('$(NetCoreRoot)shared\Microsoft.NETCore.App', '10.*')[0])</NetCoreRuntimeDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="$(NetCoreRuntimeDir)\System.*.dll" Exclude="$(NetCoreRuntimeDir)\System.Private.*.dll;$(NetCoreRuntimeDir)\System.IO.Compression.Native.dll" Private="false" />
+    <Reference Include="$(NetCoreRuntimeDir)\System.Private.CoreLib.dll;$(NetCoreRuntimeDir)\System.Private.Uri.dll;$(NetCoreRuntimeDir)\netstandard.dll;$(NetCoreRuntimeDir)\mscorlib.dll" Private="false" />
+    <Reference Include="..\..\bin\Release\mod\Wmap.dll" />
+    <Reference Include="..\..\.local\game\*.dll" />
+    <!-- Read-only production Earth sources; never build or change its project/worktree. -->
+    <Compile Include="$(EarthRoot)\src\Core\*.cs" Link="Earth\%(Filename)%(Extension)" Condition="'$(EarthRoot)' != ''" />
+  </ItemGroup>
+  <Target Name="CheckEarthRoot" BeforeTargets="BeforeBuild">
+    <Error Condition="!Exists('$(EarthRoot)\src\Core\TerrainModel.cs')" Text="Set EarthRoot to the read-only Earth production checkout (0.17.0-pre.8)." />
+  </Target>
+</Project>
+
+

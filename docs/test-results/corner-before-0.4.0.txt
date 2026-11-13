@@ -1,0 +1,2 @@
+FAIL: System.Exception: Near band: height jumps 46.22 blocks within a quarter block across an edge beside a missing diagonal tile
+   at FarTerrainChecks.<>c__DisplayClass2_3.<Run>g__Probe|22(Double camX, Double camZ, ValueTuple`2 from, ValueTuple`2 to, String what) in C:\VS mods\Wmap\tests\SmokeMod\FarTerrainChecks.cs:line 421

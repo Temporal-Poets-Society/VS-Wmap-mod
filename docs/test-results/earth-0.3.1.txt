@@ -1,0 +1,23 @@
+PASS
+Provider: Earth terrain prediction + Earth polar ice/walls
+Geometry: 25600 + 204800 x 102400; wraps=True
+Coordinates: 0° 00.0′ N  14° 09.2′ E
+World chart: 8192x4096 texels (25 blocks each), 16 threads, bake 74.5 s, pack 1.2 s (12.5 MiB), unpack 0.3 s; land 33.4%, ice 18.2%, river texels 164218, 826332 river segments
+Elapsed ms: 99962
+Client pipeline: PASS (semantic network tiles, zoom/pan request reuse, unshared prediction isolation, development permission, recorded tile encoding/index, stale-world rejection, warm cache, reconnect persistence, quota preservation, corruption recovery, world chart transfer/verification/retry/disk reuse)
+Server permissions: PASS (ordinary gameplay, unshared prediction denial, shared world chart, privileged development, isolated manifests, AllowAllPlayers; chart-ready announcement after 100% bake progress)
+Polar adapter: Earth mode (both wall tops checked; generated-chunk comparisons follow)
+Map key: PASS (atlas dispatch, remapped controls preserved, original-map fallback, cleanup)
+GUI composition: PASS (4 window/scale combinations, real AtlasDialog and Cairo, repeated open/close, recompose/disposal, opening-failure containment; GPU upload simulated)
+GPU map: PASS (AMD Radeon RX 6600; production shader in an OpenGL 3.3 core context; world chart 8192x4096 uploaded with full mipmaps in 6 steps, 95 ms; minified sea share 67% vs chart 67%; views: world-chart, world-terrain, region-chart, region-terrain, local-chart (240 detail tiles), local-terrain (240 detail tiles), seam-chart, seam continuous, gameplay-chart, real GUI element: game projection, enabled culling, and depth-tested dialog background)
+
+Generated polar terrain: PASS (576 columns, 9 locations, including 64 Arctic ice columns beyond the old strip)
+  north wall: 0/64 ice columns; max terrain-height error 0; snow cover up to 0; mismatches 0
+  north border ice: 64/64 ice columns; max terrain-height error 0; snow cover up to 0; mismatches 0
+  Arctic beyond old strip: 64/64 ice columns; max terrain-height error 0; snow cover up to 0; mismatches 0
+  Arctic Atlantic margin: 0/64 ice columns; max terrain-height error 0; snow cover up to 0; mismatches 0
+  Greenland: 64/64 ice columns; max terrain-height error 0; snow cover up to 2; mismatches 0
+  Antarctic plateau: 64/64 ice columns; max terrain-height error 0; snow cover up to 2; mismatches 0
+  Antarctic peninsula: 64/64 ice columns; max terrain-height error 0; snow cover up to 2; mismatches 0
+  south border: 64/64 ice columns; max terrain-height error 0; snow cover up to 2; mismatches 0
+  south wall: 0/64 ice columns; max terrain-height error 0; snow cover up to 0; mismatches 0

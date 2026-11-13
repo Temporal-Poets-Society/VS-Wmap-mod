@@ -1,0 +1,5 @@
+FAIL: System.Exception: A layer under the player marker is hidden by the marker's empty corners; A layer drawn after the wind arrows is hidden under them (0,0,0,0)
+   at GuiRenderChecks.Run(String output, BaseRaster raster, Topology topology, Int32 width, Int32 height, Int32 framebuffer) in C:\VS mods\Wmap\tests\SmokeMod\GuiRenderChecks.cs:line 219
+   at GpuMapChecks.Run(String output, WorldSource source, BaseRaster raster, Func`3 geography, Func`3 locate, Single[] winds) in C:\VS mods\Wmap\tests\SmokeMod\GpuMapChecks.cs:line 181
+   at Smoke.<>c__DisplayClass3_1.<StartServerSide>b__4() in C:\VS mods\Wmap\tests\SmokeMod\Smoke.cs:line 85
+Generated checks skipped after earlier failure

@@ -1,0 +1,15 @@
+WMAP LOGO - GENERATION PROMPT
+Earlier folded-map alternative. The selected publication logo is now docs/moddb-logo.png;
+see docs/moddb-logo-source.md for the Earth-style cylinder revision.
+Generated with the built-in image-generation tool on 31 October 2026.
+The original was copied into this project as wmap-logo-master.png, then downscaled without cropping
+to wmap-logo-moddb-480.png, exactly 480 x 480 pixels, for the Mod DB logo slot.
+No existing logo or game asset was replaced. This is graphic artwork, not a gameplay capture.
+
+Use case: logo-brand.
+Asset type: publication logo for the Vintage Story mod Wmap — World Atlas.
+Create a simple, restrained nautical cartography identity: a bold unfolded three-panel map symbol with a single small compass needle cut into its centre using clean negative space, above the exact wordmark "WMAP".
+One flat deep-navy ink on a warm off-white solid square background. The folded map has an elegant broad outline and very few interior lines. Make the silhouette unmistakably a map, with carefully balanced panel angles. The compass needle should be simple enough to stay readable at thumbnail size.
+Typography: exact text "WMAP" in strong plain uppercase sans-serif, wide and balanced with careful kerning. Large map mark and wordmark form a compact centred lockup with generous breathing room. Designed to read at 96 pixels as well as 480 pixels.
+Style: flat vector-style nautical identity, understated and practical. Two colours only, crisp edges. No realistic parchment, no detailed geography, no tiny symbols, no gradients, no simulated distress, no shadows, no bevels, no 3D, no voxel blocks, no decorative border, no mockup and no extra words.
+Output a finished opaque square logo.

@@ -1,0 +1,12 @@
+PASS
+Provider: Observed terrain only
+Geometry: 0 + 256000 x 102400; wraps=False
+Coordinates: none (planar world)
+World-view selected tiles: 112
+Sampled/encoded/rendered tiles: 0
+Compressed bytes: 0
+Output: 500x200
+Elapsed ms: 715
+Client pipeline: PASS (disk miss/network, stale-world rejection, styles, warm cache, immediate reconnect persistence, cache revision/quota preservation, corruption recovery, disposal)
+Map key: PASS (atlas dispatch, remapped controls preserved, original-map fallback, cleanup)
+GUI composition: PASS (4 window/scale combinations, real AtlasDialog and Cairo, repeated open/close, recompose/disposal, opening-failure containment; GPU upload simulated)

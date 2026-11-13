@@ -1,0 +1,13 @@
+{
+	"game:tabname-earthplus": "Earth+",
+	"item-jonasbarometer": "Jonas barometer",
+	"itemdesc-jonasbarometer": "A clockwork weather glass. Its glowing cups turn to winds nobody has felt yet. Carry it in your hotbar or backpack to read winds across the world, now and through the year.",
+	"handbook-jonasbarometer-title": "Reading the winds",
+	"handbook-jonasbarometer-text": "While you carry a Jonas barometer in your hotbar or backpack, the Wmap atlas and minimap show winds across the whole world, over explored and unexplored areas. In the atlas Winds list, choose Weather now, Prevailing now, or January through December to see the dominant winds throughout the year. Arrows fly with the wind: longer, heavier and more feathered arrows mean stronger winds; a small circle means calm. The line under the atlas reads the selected wind at your position and at the cursor in knots. Choose Off to hide winds. Requires the Sea mod and its wind provider.",
+	"item-papermap-blank": "Blank map",
+	"item-papermap-drawn": "Drawn map",
+	"itemdesc-papermap-blank": "Parchment ruled for a chart. Right-click while holding it to draw what you have discovered onto it.",
+	"itemdesc-papermap-drawn": "A chart someone drew of what they had discovered. Right-click while holding it to copy what you want of it into your atlas. A blank map beside it in the crafting grid makes a copy.",
+	"handbook-papermap-title": "Sharing maps",
+	"handbook-papermap-text": "Hold a blank map and right-click: tick what to draw (the area you have charted, the terrain you have recorded, your waypoints, your automatic markers, your prospecting readings) and give it a title. The map holds everything you have discovered of those, as it is now: it does not change when you explore further. Hand it to another player; holding it, they right-click and copy what they want into their own atlas. Waypoints and readings become their own, and what they have recorded themselves is kept where the map shows the same place. Copy a drawn map in the crafting grid with a blank map; the drawn one is kept."
+}

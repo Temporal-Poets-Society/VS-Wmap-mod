@@ -1,0 +1,2 @@
+FAIL: System.Exception: Near band: the far sea climbs the coast: 5132 of 126052 sea pixels are drawn more than 3 blocks above the sea (up to 75.1)
+   at FarTerrainChecks.<>c__DisplayClass2_1.<Run>g__NearBand|5() in C:\VS mods\Wmap\tests\SmokeMod\FarTerrainChecks.cs:line 379

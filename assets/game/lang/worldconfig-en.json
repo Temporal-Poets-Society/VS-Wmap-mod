@@ -1,0 +1,11 @@
+{
+  "worldconfig-category-earth": "Earth",
+  "worldattribute-wmapSharedChart": "Wmap: shared world chart",
+  "worldattribute-wmapSharedChart-desc": "Send predicted terrain to every player; the game chart hides unexplored areas. A modified client could reveal them. Off: ordinary players see only their recorded terrain. Changes apply after restarting the world.",
+  "worldconfig-wmapSharedChart-true": "On",
+  "worldconfig-wmapSharedChart-false": "Off",
+  "worldattribute-wmapExploreBySight": "Wmap: explore by sight",
+  "worldattribute-wmapExploreBySight-desc": "Chart terrain visible over the ground, with a small circle around you. Off: chart the exploration-radius circle. Needs shared predicted terrain; otherwise circle exploration applies. Changes apply after restarting the world.",
+  "worldconfig-wmapExploreBySight-true": "On",
+  "worldconfig-wmapExploreBySight-false": "Off"
+}
