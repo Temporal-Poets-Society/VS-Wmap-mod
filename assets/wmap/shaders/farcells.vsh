@@ -79,6 +79,10 @@ void terrace()
     bool atNext = sideIn.y > 0.5;
     float top = atNext ? nextTop : ownTop;
     float wet = (atNext ? nextColor.a : ownColor.a) > 0.75 ? 1.0 : 0.0;
+    // A wall's foot reaches half a block below the lower cell's top, out of sight under it (0.5.3, WM-0028): its corners take
+    // their push-down and the planet's drop at their own distance, not quite where the lower top's corners lie, and a pixel of
+    // sky showed through the sliver between them at coasts.
+    if (side != 0 && ownTop != nextTop && top == min(ownTop, nextTop)) top -= 0.5;
     vec3 normal = vec3(0.0, 1.0, 0.0);
     // A wall faces the lower cell and takes the higher cell's colour; walls between equal tops have no area.
     vec4 flatColor = ownColor;

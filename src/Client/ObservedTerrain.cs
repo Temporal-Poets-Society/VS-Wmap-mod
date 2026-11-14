@@ -79,7 +79,7 @@ public sealed class ObservedTerrain : IDisposable
     {
         var pos = api.World.Player?.Entity?.Pos;
         if (pos == null || pos.Dimension != 0 || !config.RecordObservedTerrain) return;
-        var timer = Stopwatch.StartNew();
+        timer.Restart();
         var ba = api.World.BlockAccessor;
         long now = Environment.TickCount64;
         int budget = 256;
@@ -265,6 +265,7 @@ public sealed class ObservedTerrain : IDisposable
     }
 
     readonly BlockPos top = new(0, 0, 0);
+    readonly Stopwatch timer = new();
 
     MapSample? Record(IBlockAccessor ba, IMapChunk map, int cx, int cz, int lx, int lz, bool fine)
     {
@@ -278,6 +279,20 @@ public sealed class ObservedTerrain : IDisposable
         // draws it, and Block.GetColor costs main-thread time per sample).
         if (config.MidDistanceRecorded) sample = sample with { Color = RecordedColor.Pack(ColorOf(colored, top), BlockLight(ba, top),
             RecordingRules.Structure(sample, map.WorldGenTerrainHeightMap?[lz * 32 + lx] ?? 0)) };
+        if (sample.Kind == TileData.Land)
+        {
+            // The treetops over land (0.5.3-rc.4): the rain height above the ground found under them, in the depth land had
+            // no use for, so far terrain stands forests at their real height with their real gaps.
+            int canopy = RecordingRules.CanopyDepth(y, sample.Height);
+            // A four-block sample of open ground stands for its whole cell: its height is the cell's mean generated ground
+            // (0.5.3, WM-0021, WM-D61), from the chunk's height map (no block reads), so far terrain draws discovered land at
+            // its height. Not under trees: their canopy is measured from the column's own ground, and the far view draws
+            // ground plus canopy, so the treetops stay where they are (the re-review of 14 Nov: a canopy measured from the
+            // mean made bare banks and ledges into trees).
+            if (!fine && canopy == RecordingRules.CanopyDepth(0, 0) && RecordingRules.CellMean(map.WorldGenTerrainHeightMap, lx, lz, sample.Height) is int mean)
+                sample = sample with { Height = mean };
+            sample = sample with { Depth = canopy };
+        }
         if (!tiles.Observe(x, z, sample, fine)) incomplete = true;
         Samples++;
         return sample;
@@ -285,7 +300,13 @@ public sealed class ObservedTerrain : IDisposable
 
     int ColorOf(Block block, BlockPos pos)
     {
-        try { return block?.GetColor(api, pos) ?? 0; }
+        try
+        {
+            if (block == null) return 0;
+            // Grassy soil: far terrain's own grass colours, which follow Earth's grass seasons (RecordedColor.GrassMarker).
+            // RecordingRules.TopColor without its closure: one per sample was allocated here (0.5.3, WM-0035).
+            return RecordingRules.GrassTop(block.Variant?["grasscoverage"]) ? RecordedColor.GrassMarker : block.GetColor(api, pos);
+        }
         catch (Exception) { return 0; }
     }
 

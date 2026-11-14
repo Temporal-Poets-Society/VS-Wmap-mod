@@ -20,7 +20,7 @@ namespace Wmap.Client;
 /// terraces near the real chunks, recorded structures and distant lights (<see cref="RecordedTiles"/>,
 /// <see cref="MidDistanceDraw"/>), each switched by its own setting.
 /// </summary>
-public sealed class FarTerrain : IRenderer
+public sealed partial class FarTerrain : IRenderer
 {
     // Before the game's terrain (0.37), after the sky (0.2) and sun (0.3).
     public double RenderOrder => 0.36;
@@ -36,7 +36,7 @@ public sealed class FarTerrain : IRenderer
     FarTiles tiles;
     /// <summary>The near band and climate tiles, while the server provides them; null otherwise.</summary>
     public FarTiles Tiles => tiles;
-    int plantTint, waterTint;
+    int plantTint, waterTint, grassSeasons;
     bool tintsLoaded;
     IShaderProgram program, cellsProgram, mapProgram, lightsProgram;
     bool registered, failed, disposed;
@@ -45,11 +45,13 @@ public sealed class FarTerrain : IRenderer
     readonly MidDistanceDraw mid = new();
     readonly FarLights lights;
     bool midFailed, drawnThisFrame;
+    internal bool DrawnThisFrame => drawnThisFrame;
     readonly GpuTimer terrainTime = new(), lightsTime = new();
     /// <summary>The player's recordings for the mid-distance view, once any of its parts is on; null otherwise.</summary>
     public RecordedTiles Recorded => recorded;
     object camera;
     FieldInfo zFarField;
+    bool farPlaneMissing;
     float raisedZFar, originalZFar;
     public string Status { get; private set; } = "";
 
@@ -95,6 +97,7 @@ public sealed class FarTerrain : IRenderer
             return slot;
         }
         draw.ProgramReloaded();
+        mid.ProgramReloaded();
         Load(ref program, "farterrain", out bool compiled);
         failed = !compiled;
         if (failed) { Status = "off: shader did not compile (see client-main.log)"; api.Logger.Error("[wmap] Far terrain shader did not compile; far terrain is off."); }
@@ -119,32 +122,48 @@ public sealed class FarTerrain : IRenderer
     public void OnRenderFrame(float deltaTime, EnumRenderStage stage)
     {
         drawnThisFrame = false;
-        if (disposed || failed || program == null) return;
-        if (!draw.Ready)
-        {
-            if (building == null || !building.IsCompleted) return;
-            if (!building.IsCompletedSuccessfully) { failed = true; Status = "off: " + building.Exception?.InnerException?.Message; return; }
-            draw.Upload(building.Result);
-            api.Logger.Notification("[wmap] Far terrain: {0} rings to {1} blocks, {2} vertices, {3} triangles, {4:0.0} MiB.",
-                draw.Mesh.Rings, draw.Mesh.Radius, draw.Mesh.VertexCount, draw.Mesh.Indices.Length / 3, draw.Bytes / 1048576.0);
-        }
-        var renderer = client.Renderer;
-        var player = api.World.Player?.Entity;
-        if (!renderer.BaseReady || player == null || player.Pos.Dimension != 0) { if (!renderer.BaseReady) Status = "waiting for the world chart"; return; }
-        // A land/sea mask with invented heights would raise flat plates of land on the horizon,
-        // also where another generator (Terra Prety) put mountains or sea.
-        if (client.Info?.FlatPrediction == true) { Status = "off: the world chart has no relief (approximate continents)"; return; }
-        // The chart drawn unmasked on the horizon shows terrain no one has charted: only while the server shares it.
-        // A chart downloaded in creative stays for the atlas, which masks it in gameplay.
-        if (client.Info?.CanPredict != true) { Status = "off: the server does not share its world chart with you"; return; }
-        Status = OnStatus(Status);
-
+        if (!CanDraw(out var player)) return;
         var data = api.World.Player.WorldData;
         int view = data.LastApprovedViewDistance > 0 ? Math.Min(data.LastApprovedViewDistance, data.DesiredViewDistance) : data.DesiredViewDistance;
         double far = Math.Min(client.Config.FarTerrainDistance, draw.Mesh.Radius);
         if (far <= view + 64) return;
         RaiseFarPlane((float)far + 1024);
+        PrepareFrame(player, data, view, far);
+        DrawFrame(client.Info);
+    }
 
+    /// <summary>Whether far terrain is drawn this frame: its mesh is up (uploaded here once built), the world chart is ready,
+    /// the player is in the main dimension, and the server shares a chart with relief. Sets <see cref="Status"/>.</summary>
+    bool CanDraw(out EntityPlayer player)
+    {
+        player = null;
+        if (disposed || failed || program == null) return false;
+        if (!draw.Ready)
+        {
+            if (building == null || !building.IsCompleted) return false;
+            if (!building.IsCompletedSuccessfully) { failed = true; Status = "off: " + building.Exception?.InnerException?.Message; return false; }
+            draw.Upload(building.Result);
+            api.Logger.Notification("[wmap] Far terrain: {0} rings to {1} blocks, {2} vertices, {3} triangles, {4:0.0} MiB.",
+                draw.Mesh.Rings, draw.Mesh.Radius, draw.Mesh.VertexCount, draw.Mesh.Indices.Length / 3, draw.Bytes / 1048576.0);
+        }
+        var renderer = client.Renderer;
+        player = api.World.Player?.Entity;
+        if (!renderer.BaseReady || player == null || player.Pos.Dimension != 0) { if (!renderer.BaseReady) Status = "waiting for the world chart"; return false; }
+        // A land/sea mask with invented heights would raise flat plates of land on the horizon,
+        // also where another generator (Terra Prety) put mountains or sea.
+        if (client.Info?.FlatPrediction == true) { Status = "off: the world chart has no relief (approximate continents)"; return false; }
+        // The chart drawn unmasked on the horizon shows terrain no one has charted: only while the server shares it.
+        // A chart downloaded in creative stays for the atlas, which masks it in gameplay.
+        if (client.Info?.CanPredict != true) { Status = "off: the server does not share its world chart with you"; return false; }
+        Status = OnStatus(Status);
+        return true;
+    }
+
+    /// <summary>This frame's values (<see cref="frame"/>): the camera and its matrices, where far terrain starts, the loaded
+    /// columns, light and fog, and the tiles and recordings around the camera.</summary>
+    void PrepareFrame(EntityPlayer player, IWorldPlayerData data, int view, double far)
+    {
+        var renderer = client.Renderer;
         var render = api.Render;
         // Consume each matrix before reading the next (see MapRenderer.Begin).
         Array.Copy(render.CurrentProjectionMatrix, frame.Projection, 16);
@@ -162,13 +181,19 @@ public sealed class FarTerrain : IRenderer
         // a mask the shaders read).
         long now = Environment.TickCount64;
         frame.Start = StartFor(view);
+        // The game fades its blocks into the sky by its own view distance setting (the shaders' viewDistance).
+        frame.GameFade = FarStart.GameFade(data.DesiredViewDistance);
+        frame.CloudAbove = CloudAbove(cam.Y);
+        // Loaded columns are known out to where far terrain covers the game's blocks: nearer, it draws only over columns not
+        // loaded (wmapfarshade.ash).
+        double scanReach = Math.Max(frame.Start, frame.GameFade);
         // Again at once when the camera moved a column (also a teleport or a seam jump) or the start changed (FarStart.ScanDue).
-        if (FarStart.ScanDue(loadedScanX, loadedScanZ, loadedScanStart, cam.X, cam.Z, frame.Start, now, loadedAt))
+        if (FarStart.ScanDue(loadedScanX, loadedScanZ, loadedScanStart, cam.X, cam.Z, scanReach, now, loadedAt))
         {
             loadedAt = now + FarStart.ScanMs;
             loadedSeaChunk = info.SeaLevel / 32;
-            loadedRadius = FarStart.Scan(loadedColumn ??= ColumnLoaded, cam.X, cam.Z, frame.Start, loadedMask);
-            loadedScanX = cam.X; loadedScanZ = cam.Z; loadedScanStart = frame.Start;
+            loadedRadius = FarStart.Scan(loadedColumn ??= ColumnLoaded, cam.X, cam.Z, scanReach, loadedMask);
+            loadedScanX = cam.X; loadedScanZ = cam.Z; loadedScanStart = scanReach;
             frame.LoadedMask = draw.UploadLoaded(loadedMask);
         }
         frame.FillStart = loadedRadius;
@@ -185,12 +210,23 @@ public sealed class FarTerrain : IRenderer
         Copy(calendar.SunPositionNormalized, frame.SunPosition);
         Copy(calendar.SunColor, frame.SunColor);
         Copy(api.Render.AmbientColor, frame.Ambient);
+        frame.SunLevel = SunLevel(api.World.SunLightLevels, api.World.SunBrightness);
+        frame.DebugView = DebugView;
         frame.DayLight = SkyDaylight(calendar.DayLightStrength, calendar.MoonLightStrength, player.Pos.Y - info.SeaLevel);
         UpdateTiles(info, cam.X, cam.Z, far);
         UpdateRecorded(cam.X, cam.Z);
+        // Far terrain covers the game's blocks from where they fade, at its own height: the push-down that keeps it under them
+        // nearer is gone by then, so the ground does not step down at the edge of the real chunks.
+        if (frame.GameFade > frame.Start) frame.PushFade = Math.Min(frame.PushFade, Math.Max(1, frame.GameFade - frame.Start));
+    }
 
+    /// <summary>Draws the frame: the cell map when it changed, then one pass, or three where the game fades its blocks.</summary>
+    void DrawFrame(AtlasInfo info)
+    {
         api.World.FrameProfiler.Enter("wmap-far-terrain");
         terrainTime.Begin();
+        frame.Stamp++;
+        draw.BeginFrame();
         try
         {
             if (frame.TerraceRadius > frame.DrawFrom)
@@ -204,22 +240,72 @@ public sealed class FarTerrain : IRenderer
                     finally { mapProgram.Stop(); }
                 }
             }
-            program.Use();
-            try { draw.Draw(program.ProgramId, frame); }
-            finally { program.Stop(); }
-            if (frame.TerraceRadius > frame.Start || frame.Recorded != null)
+            int mapHeight = info.MapHeight > 0 ? info.MapHeight : 512;
+            lightsDrawn = false;
+            if (frame.GameFade <= 0) DrawPass(0, mapHeight);
+            else
             {
-                cellsProgram.Use();
+                // Three passes (0.5.3-rc.6, WM-D56), before the game's chunks (render order 0.36 < 0.37): far terrain's own depth,
+                // its colour where that left it nearest, the distant lights against it, and then the cover: the depth of the point
+                // where the game starts fading its blocks, along each ray to far land past it and below the clouds. The game's
+                // blocks from there on (fading into the sky colour) then lie behind it at any distance, and every nearer one in
+                // front. rc.5 forced the depth in one pass out to 0.95 of the view distance only (two far surfaces on a pixel
+                // would have had the same depth); trees in the fading band stayed in front of far land farther away.
+                GL.GetInteger(GetPName.DepthFunc, out int depthFunc);
+                bool depthMask = GL.GetBoolean(GetPName.DepthWritemask);
+                GL.GetBoolean(GetPName.ColorWritemask, colorMask);
                 try
                 {
-                    mid.DrawTerraces(cellsProgram.ProgramId, draw, frame, info.MapHeight > 0 ? info.MapHeight : 512);
-                    if (frame.Recorded != null) mid.DrawStructures(cellsProgram.ProgramId, draw, frame, frame.SmoothStart);
+                    GL.ColorMask(false, false, false, false); GL.DepthMask(true); GL.DepthFunc(DepthFunction.Lequal);
+                    DrawPass(1, mapHeight);
+                    GL.ColorMask(colorMask[0], colorMask[1], colorMask[2], colorMask[3]); GL.DepthMask(false); GL.DepthFunc(DepthFunction.Lequal);
+                    DrawPass(2, mapHeight);
+                    GL.DepthFunc((DepthFunction)depthFunc);
+                    DrawLights();
+                    GL.ColorMask(false, false, false, false); GL.DepthMask(true); GL.DepthFunc(DepthFunction.Less);
+                    DrawPass(3, mapHeight);
                 }
-                finally { cellsProgram.Stop(); }
+                finally
+                {
+                    GL.ColorMask(colorMask[0], colorMask[1], colorMask[2], colorMask[3]);
+                    GL.DepthMask(depthMask);
+                    GL.DepthFunc((DepthFunction)depthFunc);
+                    frame.Pass = 0;
+                }
             }
             drawnThisFrame = true;
         }
-        finally { terrainTime.End(); api.World.FrameProfiler.Leave(); }
+        finally { draw.EndFrame(); terrainTime.End(); api.World.FrameProfiler.Leave(); }
+    }
+
+    /// <summary>The smooth mesh, the terraces and the recorded structures in one pass (<see cref="FarFrame.Pass"/>).</summary>
+    void DrawPass(int pass, int mapHeight)
+    {
+        frame.Pass = pass;
+        program.Use();
+        try { draw.Draw(program.ProgramId, frame); }
+        finally { program.Stop(); }
+        if (frame.TerraceRadius > frame.Start || frame.Recorded != null)
+        {
+            cellsProgram.Use();
+            try
+            {
+                mid.DrawTerraces(cellsProgram.ProgramId, draw, frame, mapHeight);
+                if (frame.Recorded != null) mid.DrawStructures(cellsProgram.ProgramId, draw, frame, frame.SmoothStart);
+            }
+            finally { cellsProgram.Stop(); }
+        }
+    }
+
+    bool lightsDrawn;
+    readonly bool[] colorMask = new bool[4];
+
+    /// <summary>Blocks from the camera up to the underside of the game's cloud layer (its cloud level less 16), 0 when unknown.</summary>
+    double CloudAbove(double cameraY)
+    {
+        var weather = api.ModLoader.GetModSystem<Vintagestory.GameContent.WeatherSystemClient>();
+        if (weather == null) return 0;
+        return weather.CloudLevelRel * api.World.BlockAccessor.MapSizeY - 16 - cameraY;
     }
 
     /// <summary>The mid-distance view's parts this frame, from the settings (switched live by <c>.wmap mid</c>): recorded
@@ -289,10 +375,13 @@ public sealed class FarTerrain : IRenderer
         return $"on; near band {ready}/{wanted} tiles" + (climateReady != null ? $", climate {climateReady}/{climateWanted}" : "");
     }
 
-    /// <summary>The distant lights, after the game's chunks so they hide them (<see cref="FarLights"/>).</summary>
+    /// <summary>The distant lights: between far terrain's colour and its cover (0.5.3-rc.6), so far hills hide them and the game's
+    /// chunks drawn after cover them where nearer; else after the game's chunks (<see cref="FarLights"/>).</summary>
     internal void DrawLights()
     {
-        if (!drawnThisFrame || disposed || midFailed || lightsProgram == null || recorded == null || !client.Config.MidDistanceLights) { mid.Lights = 0; return; }
+        if (lightsDrawn) return;
+        lightsDrawn = true;
+        if (disposed || midFailed || lightsProgram == null || recorded == null || !client.Config.MidDistanceLights) { mid.Lights = 0; return; }
         var render = api.Render;
         Array.Copy(render.CurrentProjectionMatrix, frame.Projection, 16);
         Array.Copy(render.CameraMatrixOriginf, frame.View, 16);
@@ -309,9 +398,20 @@ public sealed class FarTerrain : IRenderer
         var c = client.Config;
         string parts = $"recorded terrain {(c.MidDistanceRecorded ? "on" : "off")}, terraces {(c.MidDistanceTerraces ? "on" : "off")} (to {c.TerraceDistance}), lights {(c.MidDistanceLights ? "on" : "off")} (to {c.LightDistance})";
         if (midFailed) return parts + "; off: its shaders did not compile (see client-main.log)";
-        string tiles = recorded == null ? "no recordings loaded" : $"four-block tiles {recorded.CoarseReady}/{recorded.CoarseWanted}, two-block {recorded.FineReady}/{recorded.FineWanted}, {mid.Boxes} structure blocks, {mid.Lights} lights, {mid.Patches} terrace patches";
+        string tiles = recorded == null ? "no recordings loaded" : $"four-block tiles {recorded.CoarseReady}/{recorded.CoarseWanted}, two-block {recorded.FineReady}/{recorded.FineWanted}, {mid.Boxes} structure blocks, {mid.Lights} lights, {mid.Patches} terrace patches"
+            + $"; forest canopy {frame.Canopy:0} blocks ({(recorded.CanopyCells >= FarStart.CanopyCellsNeeded ? "recorded" : "default")}: middle treetop {recorded.CanopyHeight} of {recorded.CanopyCells} recorded tree cells)";
         return $"{parts}; {tiles}; far terrain {Status}; GPU {terrainTime.Milliseconds:0.00} ms far terrain, {lightsTime.Milliseconds:0.00} ms lights";
     }
+
+    /// <summary>Debug view for every far terrain (<c>.wmap fardebug</c>, not saved): 0 off, 1 the colour alone, 2 lit without
+    /// haze or fog, to compare far terrain's colour with the game's own ground on screen.</summary>
+    public static int DebugView;
+
+    /// <summary>The brightness of full sunlight the game's chunks are lit with: the world's sun-light level table at its sun
+    /// brightness (vanilla: SunLightLevels[24] = 0.866, which the chunk tesselator puts in each sky-lit vertex's light and
+    /// chunkopaque.vsh multiplies the ambient colour by). 0 when the table is missing.</summary>
+    public static float SunLevel(float[] levels, int brightness) =>
+        levels == null || levels.Length == 0 ? 0 : levels[Math.Clamp(brightness, 0, levels.Length - 1)];
 
     /// <summary>The daylight the game's sky and chunk shaders get (SystemRenderSkyColor: 1.25 × the day's light less half
     /// the moon's, at least 0.05, fading out far above the sea). Far terrain's sky colour, lighting and how much it takes
@@ -334,11 +434,11 @@ public sealed class FarTerrain : IRenderer
     /// <summary>A sea-level water block's surface is 7/8 of a block high: the real sea lies 1/8 below <c>SeaLevel</c>.</summary>
     public const double WaterBelowSeaLevel = 0.125;
 
-    /// <summary>Whether the near band and the climate tiles can be drawn with this server's manifest and these settings:
-    /// a 0.4.0 server that shares predictions with relief; climate also needs its biome sampler (Earth Map).</summary>
     /// <summary>Whether this far terrain was made for the near band and climate tiles a manifest allows (always, when it is off).</summary>
     public bool Matches(AtlasInfo info) => !registered || disposed || TilesFor(info, client.Config) == (wantBand, wantClimate);
 
+    /// <summary>Whether the near band and the climate tiles can be drawn with this server's manifest and these settings:
+    /// a 0.4.0 server that shares predictions with relief; climate also needs its biome sampler (Earth Map).</summary>
     public static (bool Band, bool Climate) TilesFor(AtlasInfo info, WmapConfig config)
     {
         bool tiles = info != null && info.FarTiles && info.CanPredict && !info.FlatPrediction;
@@ -351,9 +451,21 @@ public sealed class FarTerrain : IRenderer
         frame.Tiles = null;
         if (!wantBand && !wantClimate) return;
         // The band's tiles carry biomes either way; without climate their tints and forests are not drawn.
-        if (!tintsLoaded && wantClimate) { tintsLoaded = true; plantTint = LoadTint("textures/environment/planttint.png"); waterTint = LoadTint("textures/environment/watertint.png"); }
-        frame.PlantTint = plantTint; frame.WaterTint = waterTint;
-        frame.Canopy = wantClimate ? 8 : 0;
+        if (!tintsLoaded && wantClimate)
+        {
+            tintsLoaded = true;
+            plantTint = LoadTint("textures/environment/planttint.png"); waterTint = LoadTint("textures/environment/watertint.png");
+            grassSeasons = LoadGrassSeasons();
+        }
+        if (grassSeasons != 0) UpdateAltitudeRow(frame.HeightScale);
+        frame.PlantTint = plantTint; frame.WaterTint = waterTint; frame.GrassSeasons = grassSeasons;
+        // The time of year the game colours plants by (its colour-map shader's seasonRel), and the calendar's.
+        frame.SeasonRel = api.Render.ShaderUniforms.SeasonRel;
+        frame.YearRel = (float)api.World.Calendar.YearRel;
+        // A full forest's canopy: the recorded forest's middle treetop height around the camera where enough of it is
+        // recorded (0.5.3-rc.8, WM-0020), else 8 blocks. Predicted forest stood 8 blocks high everywhere, so it met real
+        // recorded treetops (about 15 blocks in Latvia) with a step all along where the recording ended.
+        frame.Canopy = !wantClimate ? 0 : FarStart.CanopyFor(recorded?.CanopyHeight ?? 0, recorded?.CanopyCells ?? 0);
         // Permissions can change during a session: then no more requests, and the chart alone.
         if (!info.CanPredict) return;
         if (tiles == null)
@@ -369,34 +481,8 @@ public sealed class FarTerrain : IRenderer
         tiles.Update(cameraX, cameraZ, origin.X, frame.DrawFrom);
         frame.Tiles = tiles;
         frame.BandRadius = client.Config.NearBandDistance;
-        frame.BandFadeStart = frame.BandRadius - 336;
+        frame.BandFadeStart = frame.BandRadius - FarFrame.BandFade;
         if (tiles.Band != null) Status = BandStatus(Status, ref statusCounts, tiles.Band.Ready, tiles.Band.Wanted, tiles.Climate?.Ready, tiles.Climate?.Wanted);
-    }
-
-    /// <summary>One of the game's climate colour maps as a GL texture, or 0.</summary>
-    int LoadTint(string path)
-    {
-        try
-        {
-            var asset = api.Assets.TryGet(new AssetLocation("game", path));
-            if (asset?.Data == null) return 0;
-            using var bitmap = api.Render.BitmapCreateFromPng(asset.Data);
-            using var unpack = new GlUnpack();
-            int id = GL.GenTexture();
-            GL.BindTexture(TextureTarget.Texture2D, id);
-            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba8, bitmap.Width, bitmap.Height, 0, PixelFormat.Bgra, PixelType.UnsignedByte, bitmap.Pixels);
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMaxLevel, 0);
-            return id;
-        }
-        catch (Exception e)
-        {
-            api.Logger.Warning("[wmap] Could not load the game's {0}; far terrain keeps the atlas colours: {1}", path, e.Message);
-            return 0;
-        }
     }
 
     public void Receive(TileResponse response) => tiles?.Receive(response);
@@ -409,9 +495,16 @@ public sealed class FarTerrain : IRenderer
     {
         if (zFarField == null)
         {
+            // Looked up once (0.5.3, WM-0042: tried again every frame, without a word, where the game has no such field).
+            if (farPlaneMissing) return;
             camera = api.World.GetType().GetField("MainCamera")?.GetValue(api.World);
             zFarField = camera?.GetType().GetField("ZFar");
-            if (zFarField == null) return;
+            if (zFarField == null)
+            {
+                farPlaneMissing = true;
+                api.Logger.Warning("[wmap] The game's camera has no ZFar field: far terrain past {0:0} blocks is clipped.", api.Render.ShaderUniforms.ZFar);
+                return;
+            }
             originalZFar = (float)zFarField.GetValue(camera);
         }
         float current = (float)zFarField.GetValue(camera);
@@ -444,108 +537,7 @@ public sealed class FarTerrain : IRenderer
         terrainTime.Dispose(); lightsTime.Dispose();
         if (plantTint != 0) GL.DeleteTexture(plantTint);
         if (waterTint != 0) GL.DeleteTexture(waterTint);
+        if (grassSeasons != 0) GL.DeleteTexture(grassSeasons);
         program?.Dispose(); cellsProgram?.Dispose(); mapProgram?.Dispose(); lightsProgram?.Dispose();
     }
-}
-
-/// <summary>The mid-distance view's distant lights, drawn after the game's chunks (the far terrain renderer runs before
-/// them) so the real terrain in front hides them too.</summary>
-sealed class FarLights : IRenderer
-{
-    readonly FarTerrain far;
-    public FarLights(FarTerrain far) { this.far = far; }
-    public double RenderOrder => 0.9;
-    public int RenderRange => 99999;
-    public void OnRenderFrame(float deltaTime, EnumRenderStage stage) => far.DrawLights();
-    public void Dispose() { }
-}
-
-/// <summary>GPU time between <see cref="Begin"/> and <see cref="End"/>, from timestamp queries read a few frames later (never
-/// waiting for them), averaged. Timestamps, unlike elapsed-time queries, cannot clash with another mod's open query.</summary>
-public sealed class GpuTimer : IDisposable
-{
-    const int Depth = 4;
-    readonly int[] queries = new int[Depth * 2];
-    readonly bool[] pending = new bool[Depth];
-    int next;
-    /// <summary>Averaged over about the last 30 measured frames.</summary>
-    public double Milliseconds { get; private set; }
-    public void Begin()
-    {
-        if (queries[0] == 0) GL.GenQueries(queries.Length, queries);
-        int i = next;
-        if (pending[i])
-        {
-            GL.GetQueryObject(queries[i * 2 + 1], GetQueryObjectParam.QueryResultAvailable, out int available);
-            if (available == 0) { skip = true; return; }
-            GL.GetQueryObject(queries[i * 2], GetQueryObjectParam.QueryResult, out long start);
-            GL.GetQueryObject(queries[i * 2 + 1], GetQueryObjectParam.QueryResult, out long end);
-            Milliseconds += ((end - start) / 1e6 - Milliseconds) / 30;
-            pending[i] = false;
-        }
-        skip = false;
-        GL.QueryCounter(queries[i * 2], QueryCounterTarget.Timestamp);
-    }
-    bool skip;
-    public void End()
-    {
-        if (skip || queries[0] == 0) return;
-        GL.QueryCounter(queries[next * 2 + 1], QueryCounterTarget.Timestamp);
-        pending[next] = true;
-        next = (next + 1) % Depth;
-    }
-    public void Dispose() { if (queries[0] != 0) GL.DeleteQueries(queries.Length, queries); queries[0] = 0; }
-}
-
-/// <summary>
-/// Optional sea colour from the Sea mod, read by reflection: a member <c>FarWaterColor</c> on <c>Sea.SeaSystem</c>
-/// (field, property or parameterless method) returning RGB 0..1 as float[] / Vec3f / Vec4f, or an int 0xRRGGBB.
-/// Sea does not provide one yet; without it the atlas's sea colours are used.
-/// </summary>
-public sealed class SeaWater
-{
-    readonly object system;
-    readonly MemberInfo member;
-    float[] color;
-    long readAt;
-
-    public SeaWater(ICoreClientAPI api)
-    {
-        system = api.ModLoader?.Systems?.FirstOrDefault(s => s?.GetType().FullName == "Sea.SeaSystem");
-        var type = system?.GetType();
-        member = (MemberInfo)type?.GetField("FarWaterColor") ?? (MemberInfo)type?.GetProperty("FarWaterColor") ?? type?.GetMethod("FarWaterColor", Type.EmptyTypes);
-    }
-
-    /// <summary>RGB, or null when Sea does not supply a colour. Refreshed every few seconds.</summary>
-    public float[] Color
-    {
-        get
-        {
-            if (member == null || Environment.TickCount64 - readAt < 5000) return color;
-            readAt = Environment.TickCount64;
-            try
-            {
-                object v = member switch
-                {
-                    FieldInfo f => f.GetValue(system),
-                    PropertyInfo p => p.GetValue(system),
-                    MethodInfo m => m.Invoke(system, null),
-                    _ => null
-                };
-                color = Parse(v);
-            }
-            catch (Exception) { color = null; }
-            return color;
-        }
-    }
-
-    public static float[] Parse(object v) => v switch
-    {
-        float[] a when a.Length >= 3 => new[] { a[0], a[1], a[2] },
-        double[] a when a.Length >= 3 => new[] { (float)a[0], (float)a[1], (float)a[2] },
-        Vec3f a => new[] { a.X, a.Y, a.Z },
-        Vec4f a => new[] { a.R, a.G, a.B },
-        int rgb => new[] { (rgb >> 16 & 255) / 255f, (rgb >> 8 & 255) / 255f, (rgb & 255) / 255f },
-        _ => null
-    };
 }

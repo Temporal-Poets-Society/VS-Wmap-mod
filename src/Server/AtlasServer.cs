@@ -121,10 +121,20 @@ public sealed class AtlasServer : IDisposable
 
     public void Hello(IServerPlayer p, AtlasHello hello)
     {
-        if (disposed || source == null || hello.Protocol != WmapProtocol.Version) return;
+        if (disposed) return;
+        // Another protocol, or an atlas that did not start, is answered with why (0.5.3, WM-0034): the hello used to go
+        // unanswered, and the client asked again every 3 s behind "requesting atlas access" for ever.
+        if (hello.Protocol != WmapProtocol.Version)
+        {
+            Decline(p, $"the server runs World Map's protocol {WmapProtocol.Version}, this client {hello.Protocol}; use the same World Map version on both");
+            return;
+        }
+        if (source == null) { Decline(p, "the server's atlas did not start (its log says why)"); return; }
         greeted.Add(p.PlayerUID);
         SendInfo(p);
     }
+
+    void Decline(IServerPlayer p, string why) => channel.SendPacket(new AtlasInfo { Allowed = false, Declined = why, ServerProtocol = WmapProtocol.Version }, p);
 
     /// <summary>The planet's radius for the horizon: a world with geography is a globe whose east-west circumference is the
     /// ring; others are flat (0).</summary>
@@ -136,16 +146,19 @@ public sealed class AtlasServer : IDisposable
         bool chart = MayPredict(p) && s.HasOverview;
         byte[] packed = basePacked;
         string id = packed != null ? baseId : null;
-        // Never mutate a shared manifest's permission while serving different players.
-        channel.SendPacket(new AtlasInfo { Session = s.Session, CacheId = s.CacheId, StartX = s.StartX, Width = s.Width, Height = s.Height, Wraps = s.Wraps,
-            Allowed = true, CanDevelop = Allowed(p), HasOverview = s.HasOverview && Allowed(p), CanPredict = chart,
-            Source = s.Source, SeaLevel = s.SeaLevel, MapHeight = s.MapHeight, HeightRange = s.HeightRange, EquatorZ = s.EquatorZ, PoleDistance = s.PoleDistance, HasGeography = s.HasGeography, GeographyProvider = s.GeographyProvider, ObservationId = s.ObservationId,
-            BaseId = chart ? id : null, BaseWidth = baseWidth, BaseHeight = baseHeight, BaseBytes = chart ? packed?.Length ?? 0 : 0, BaseProgress = baseProgress, BarometerRange = config.BarometerRange, FlatPrediction = s.FlatPrediction,
-            FarTiles = s.FarTiles, Biome = s.Biome, BiomeId = s.Biome ? s.BiomeId : null, Teleport = true,
-            ClimateId = chart ? climateId : null, ClimateBytes = chart ? climatePacked?.Length ?? 0 : 0,
-            ExploreBySight = config.ExploreBySight, SightDistance = config.SightDistance, SightCircle = config.SightCircle, SightHoleSize = config.SightHoleSize,
-            PlanetRadius = PlanetRadius(s, config.PlanetScale), AutoMarks = config.AutoMarks, PaperMaps = config.PaperMaps,
-            OreHeatCodes = Allowed(p) ? OreHeat?.Codes : null, OreHeatMethod = Allowed(p) ? OreHeat?.Method : null }, p);
+        bool full = Allowed(p);
+        // The world's info, copied (never changed while serving different players), then what this player may see and the
+        // server's settings (0.5.3, WM-0040: copied field by field, so a new field had to be added here too).
+        var info = s.Copy();
+        info.Allowed = true; info.CanDevelop = full; info.HasOverview = s.HasOverview && full; info.CanPredict = chart;
+        info.BaseId = chart ? id : null; info.BaseWidth = baseWidth; info.BaseHeight = baseHeight; info.BaseBytes = chart ? packed?.Length ?? 0 : 0; info.BaseProgress = baseProgress;
+        info.BiomeId = s.Biome ? s.BiomeId : null; info.Teleport = true;
+        info.ClimateId = chart ? climateId : null; info.ClimateBytes = chart ? climatePacked?.Length ?? 0 : 0;
+        info.BarometerRange = config.BarometerRange;
+        info.ExploreBySight = config.ExploreBySight; info.SightDistance = config.SightDistance; info.SightCircle = config.SightCircle; info.SightHoleSize = config.SightHoleSize;
+        info.PlanetRadius = PlanetRadius(s, config.PlanetScale); info.AutoMarks = config.AutoMarks; info.PaperMaps = config.PaperMaps;
+        info.OreHeatCodes = full ? OreHeat?.Codes : null; info.OreHeatMethod = full ? OreHeat?.Method : null;
+        channel.SendPacket(info, p);
         if (packed != null) chartAnnounced.Add(p.PlayerUID);
     }
 
@@ -271,7 +284,7 @@ public sealed class AtlasServer : IDisposable
         if (climateFresh)
         {
             climateFresh = false;
-            foreach (string uid in greeted.ToArray())
+            foreach (string uid in greeted)
                 if (api.World.PlayerByUid(uid) is IServerPlayer player && player.ConnectionState == EnumClientState.Playing) SendInfo(player);
         }
         bool ready = BaseReady;
@@ -283,7 +296,7 @@ public sealed class AtlasServer : IDisposable
         }
         if (announceProgress || ready)
         {
-            foreach (string uid in greeted.ToArray())
+            foreach (string uid in greeted)
                 if ((announceProgress || !chartAnnounced.Contains(uid)) && api.World.PlayerByUid(uid) is IServerPlayer player && player.ConnectionState == EnumClientState.Playing) SendInfo(player);
         }
     }
@@ -436,7 +449,7 @@ public sealed class AtlasServer : IDisposable
             // Without a biome sampler a near-band request gets its semantic tile alone.
             if (TileContent.HasBiome(r.Content) && source.Biome != null)
                 response.Biome = Cached(Path.Combine(cache, BiomeTile.FileName(key, source.Info.BiomeId)), BiomeTile.MaxCompressedBytes, b => BiomeTile.Unpack(b),
-                    () => BiomeTile.Pack(BiomeTile.Sample(t, key, source.Biome, stop.Token)));
+                    () => BiomeTile.Pack(BiomeTile.Sample(t, key, source.Biome, source.Season, stop.Token)));
             return true;
         }
         catch (OperationCanceledException) { return false; }
@@ -464,61 +477,12 @@ public sealed class AtlasServer : IDisposable
         var lazy = making.GetOrAdd(path, _ => new Lazy<byte[]>(() =>
         {
             var made = make();
-            try { TileCodec.WriteAtomic(path, made); Wrote(cache, made.Length, config.DiskCacheMiB); }
+            try { TileCodec.WriteAtomic(path, made); TileCache.Wrote(cache, made.Length, config.DiskCacheMiB); }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { /* Disk caching is optional; the tile is still usable. */ }
             return made;
         }, LazyThreadSafetyMode.ExecutionAndPublication));
         try { return lazy.Value; }
         finally { making.TryRemove(new KeyValuePair<string, Lazy<byte[]>>(path, lazy)); }
-    }
-
-    // Each cache folder's trimmed tiles in bytes (-1 until first counted), and whether a trim of it is running.
-    // Bytes and RetryAt are used only by the writer holding Trimming; the others add to During.
-    sealed class CacheSize { public long Bytes = -1, During, RetryAt; public int Trimming; }
-    static readonly ConcurrentDictionary<string, CacheSize> cacheSizes = new();
-
-    /// <summary>Counts a predicted tile written to a cache folder. The folder is scanned once, when first counted, then
-    /// only when the count passes <paramref name="mib"/>: it is trimmed to 90 % of that. One trim of a folder at a time,
-    /// for every writer sharing it; the others do not wait, and what they wrote meanwhile is counted after it. Rewritten
-    /// files, and files written while a scan ran, may count twice, which only trims a little sooner. A trim that cannot
-    /// get under the limit (files in use or read-only) is not tried again for a minute.</summary>
-    public static void Wrote(string folder, long bytes, int mib)
-    {
-        var size = cacheSizes.GetOrAdd(Path.GetFullPath(folder), _ => new());
-        if (Interlocked.CompareExchange(ref size.Trimming, 1, 0) != 0) { Interlocked.Add(ref size.During, bytes); return; }
-        long limit = (long)mib << 20, now = Environment.TickCount64;
-        try
-        {
-            long added = bytes + Interlocked.Exchange(ref size.During, 0);
-            if (size.Bytes >= 0 && (size.Bytes += added) <= limit || now < size.RetryAt) return;
-            // The scan counts what was written before it; what is written while it runs is added after.
-            long left = TrimCache(folder, mib, 0.9);
-            size.Bytes = left + Interlocked.Exchange(ref size.During, 0);
-            size.RetryAt = left > limit ? now + 60_000 : 0;
-        }
-        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { size.RetryAt = now + 60_000; }
-        finally { Volatile.Write(ref size.Trimming, 0); }
-    }
-
-    /// <summary>Deletes the oldest predicted tiles while they take more than <paramref name="mib"/>, down to
-    /// <paramref name="to"/> of it. Returns the bytes they take afterwards.</summary>
-    public static long TrimCache(string folder, int mib, double to = 1)
-    {
-        if (!Directory.Exists(folder)) return 0;
-        // Only predicted tiles (and ore heat tiles, WM-D48) are trimmed; the world chart and recorded observations are kept.
-        var dir = new DirectoryInfo(folder);
-        var files = dir.EnumerateFiles("0-*.wmt").Concat(dir.EnumerateFiles("b-*.wmt")).Concat(dir.EnumerateFiles("o-*.wmt")).OrderBy(f => f.LastWriteTimeUtc).ToList();
-        long total = files.Sum(f => f.Length), limit = (long)mib * 1024 * 1024;
-        if (total <= limit) return total;
-        long target = (long)(limit * to);
-        foreach (var f in files)
-        {
-            if (total <= target) break;
-            // A file another trim removed, one in use or read-only: skip it; trimming must not fail the tile being made.
-            try { long size = f.Length; f.Delete(); total -= size; }
-            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { }
-        }
-        return total;
     }
 
     public void Dispose() { disposed = true; stop.Cancel(); jobs.CompleteAdding(); /* Workers own no game API calls and observe cancellation per tile row. */ }

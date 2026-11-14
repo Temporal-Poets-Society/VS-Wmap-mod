@@ -93,6 +93,9 @@ public sealed class WmapConfig
     public int NearBandDistance = 1536;
     /// <summary>Colour far terrain with the game's climate tints and raise forests (Earth Map; 0.4.0+).</summary>
     public bool FarTerrainClimate = true;
+    /// <summary>Ore heat maps on the full map and `/wmapore` (WM-D47). Off by default from 0.5.3 (WM-0025): on Earth's
+    /// default ores the map can show ore that the prospecting pick does not find, so it ships switched off.</summary>
+    public bool OreHeatMaps = false;
     /// <summary>Mid-distance view (WM-P06 prototype): record every loaded chunk out to the view distance, with the game's
     /// colours and block light, and draw recorded terrain over the prediction in far terrain out to
     /// <see cref="NearBandDistance"/>, with recorded structures as blocks. See docs/mid-distance-view.md.</summary>

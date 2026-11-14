@@ -9,7 +9,7 @@ Can a player see out to about 1536 blocks for much less than the cost of a 1536-
 ## Where things stand
 
 - **Real chunks.** At view distance `V` the game draws water to 0.75–0.80 `V` and land to 0.80–0.85 `V`, where it fades into the sky (see [far-terrain.md](far-terrain.md) item 7). At `V` = 512, land therefore ends at about 410–435 blocks.
-- **Far terrain** (0.3.6, joined to the sea in 0.3.10) starts at 0.75 `V`. It is drawn from the world chart: about 25 blocks per texel on Earth's 204,800-block ring. Hills nearer than about 2 km look smooth and blobby, coasts are rounded, and valleys narrower than about 50 blocks vanish. The `FarTerrainDetail` setting only makes the mesh finer. Below 25 blocks it just interpolates the same chart.
+- **Far terrain** (0.3.6, joined to the sea in 0.3.10) starts at 0.75 `V`. It is drawn from the world chart: about 25 blocks per texel on Earth's 204,800-block ring (1:200; 49 at Earth 2.0's default 1:100, 489 at 1:10, WM-0024). Hills nearer than about 2 km look smooth and blobby, coasts are rounded, and valleys narrower than about 50 blocks vanish. The `FarTerrainDetail` setting only makes the mesh finer. Below 25 blocks it just interpolates the same chart.
 - **A larger world chart is not the answer.** At 16,384 × 8,192 the download grows from 12.5 MiB to about 50 MiB, and graphics memory from about 170 MiB to about 680 MiB with mipmaps, for every player, everywhere. Detail is needed only near the player.
 
 ## Why a 1536 view distance is expensive in vanilla

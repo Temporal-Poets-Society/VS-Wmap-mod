@@ -7,7 +7,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Vintagestory.API.Client;
 using Wmap.Core;
-using Wmap.Server;
 
 namespace Wmap.Client;
 
@@ -20,6 +19,9 @@ public sealed class TileClient : IDisposable
 {
     public sealed class Entry
     {
+        static long next;
+        /// <summary>This entry's own number: an entry evicted and loaded again is another.</summary>
+        public readonly long Id = Interlocked.Increment(ref next);
         public TileData Data;      // recorded tiles only
         public byte[] Rgba;        // semantic texels, null while empty or loading
         public long Used;
@@ -29,8 +31,11 @@ public sealed class TileClient : IDisposable
         public long QueuedAt;      // recorded: when it was last copied for encoding and saving
         public byte[] Prediction;  // recorded: the prediction's texels it was last encoded over
     }
-    sealed record Work(TileKey Key, TileData Snapshot, byte[] Network, int Revision, bool Save, byte[] Prediction = null);
-    sealed record Result(TileKey Key, TileData Data, byte[] Rgba, int Revision, bool Missing, string Error, bool SaveFailed = false, bool ReadFailed = false);
+    // Texels: a recording is encoded to semantic texels only while a view wants it (0.5.3, WM-0035: every save and load of
+    // the recorder's tiles, map closed, encoded two 67 KB arrays nobody drew); Result.Texels false leaves the texels as
+    // they were, and the view encodes the tile when it wants it (RenderedRevision stays behind).
+    sealed record Work(TileKey Key, TileData Snapshot, byte[] Network, int Revision, bool Save, byte[] Prediction = null, bool Texels = true);
+    sealed record Result(TileKey Key, TileData Data, byte[] Rgba, int Revision, bool Missing, string Error, bool SaveFailed = false, bool ReadFailed = false, bool Texels = true);
     readonly BlockingCollection<Work> work = new(64);
     readonly BlockingCollection<Result> results = new(64);
     readonly CancellationTokenSource stop = new();
@@ -163,7 +168,7 @@ public sealed class TileClient : IDisposable
             entries.Remove(victim.Value);
         }
         var e = new Entry { Used = ++clock };
-        if (!work.TryAdd(new(key, null, null, 0, false))) return null;
+        if (!work.TryAdd(new(key, null, null, 0, false, Texels: desired.Contains(key)))) return null;
         e.Busy = true; entries[key] = e;
         return e;
     }
@@ -184,6 +189,7 @@ public sealed class TileClient : IDisposable
             // either way one copy is spare for the next snapshot (0.5.0-pre.2: each was a new 150 KB tile).
             if (result.Revision != e.Revision) { if (result.Key.Layer == 1 && result.Data != null && result.Data != e.Data) Spare(result.Data); continue; }
             if (result.Key.Layer == 1) { if (e.Data != null && e.Data != result.Data) Spare(e.Data); e.Data = result.Data; }
+            if (!result.Texels) continue;
             e.Rgba = result.Rgba; e.RenderedRevision = result.Revision;
             e.Missing = result.Missing;
             Invalidated?.Invoke(result.Key);
@@ -214,7 +220,7 @@ public sealed class TileClient : IDisposable
         // Flush edits even while the map window is closed, at bounded throughput: two tiles a tick, each at most every
         // SaveMs (0.5.0-pre.2: the mid-distance view's recorder keeps many tiles changing, and every flush copies a tile);
         // up to eight while more than a quarter of the resident tiles wait (W2: SaveBacklog). Retry recordings whose file
-        // could not be read. (playtest merge: the prototype's throttle with the review's backlog count, in one pass)
+        // could not be read.
         int unsaved = 0;
         scratch.Clear(); retries.Clear();
         foreach (var pair in entries)
@@ -228,7 +234,7 @@ public sealed class TileClient : IDisposable
         SaveBacklog = unsaved > config.ResidentTiles / 4;
         for (int i = 0; i < scratch.Count && i < (SaveBacklog ? 8 : 2); i++) QueueEncode(scratch[i], entries[scratch[i]]);
         foreach (var key in retries)
-            if (work.TryAdd(new(key, null, null, entries[key].Revision, false))) entries[key].Busy = true;
+            if (work.TryAdd(new(key, null, null, entries[key].Revision, false, Texels: desired.Contains(key)))) entries[key].Busy = true;
     }
     /// <summary>A recording shown in a view is encoded again at most this often while it changes, and saved at most this
     /// often otherwise (milliseconds). Its first encoding is at once.</summary>
@@ -248,7 +254,14 @@ public sealed class TileClient : IDisposable
         byte[] prediction = PredictionOf(key) ?? e.Prediction;
         var snapshot = spare.Count > 0 ? spare.Pop() : new TileData();
         e.Data.CopyTo(snapshot);
-        if (work.TryAdd(new(key, snapshot, null, e.Revision, e.Dirty, prediction))) { e.Busy = true; e.Dirty = false; e.Prediction = prediction; e.QueuedAt = Environment.TickCount64; }
+        bool texels = desired.Contains(key);
+        if (work.TryAdd(new(key, snapshot, null, e.Revision, e.Dirty, prediction, texels)))
+        {
+            e.Busy = true; e.Dirty = false; e.QueuedAt = Environment.TickCount64;
+            // Only a job that encodes texels encodes them over this prediction (the re-review of 14 Nov 2026: a save with the
+            // map closed marked a recording as encoded over a prediction it never saw, and it was not encoded again).
+            if (texels) e.Prediction = prediction;
+        }
         else Spare(snapshot);
     }
     /// <summary>The texels of the prediction under a recording, while resident (they are replaced, never changed in place).</summary>
@@ -413,7 +426,7 @@ public sealed class TileClient : IDisposable
                         missing = rgba == null;
                         if (w.Save && rgba != null)
                         {
-                            try { TileCodec.WriteAtomic(path, packed); AtlasServer.Wrote(folder, packed.Length, config.DiskCacheMiB); }
+                            try { TileCodec.WriteAtomic(path, packed); TileCache.Wrote(folder, packed.Length, config.DiskCacheMiB); }
                             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { error = "Cache write: " + e.Message; }
                         }
                         if (rgba != null && !SemanticTile.Any(rgba)) rgba = null;
@@ -437,18 +450,17 @@ public sealed class TileClient : IDisposable
                             catch (Exception e) when (e is InvalidDataException || e is EndOfStreamException) { }
                         }
                         if (readFailed) { results.Add(new(w.Key, null, null, w.Revision, false, error, false, true), stop.Token); continue; }
-                        // (playtest merge) a new recording's colours are made here on the worker, as before W1-15 made them
-                        // lazy: the mid-distance recorder colours every recording, and its first colour would otherwise make
-                        // the 67 KB array on the main thread
+                        // A new recording's colours are made here on the worker: the mid-distance recorder colours every
+                        // recording, and its first colour would otherwise make the 67 KB array on the main thread.
                         if (data == null) { data = new TileData(); _ = data.Colors; }
                         if (w.Save)
                         {
                             try { TileCodec.WriteAtomic(path, TileCodec.Encode(data)); }
                             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { error = "Observation write: " + e.Message; saveFailed = true; }
                         }
-                        rgba = data.Any ? SemanticTile.Encode(data, Info.SeaLevel, w.Prediction, Info.ChartHeightRange) : null;
+                        rgba = w.Texels && data.Any ? SemanticTile.Encode(data, Info.SeaLevel, w.Prediction, Info.ChartHeightRange) : null;
                     }
-                    results.Add(new(w.Key, data, rgba, w.Revision, missing, error, saveFailed), stop.Token);
+                    results.Add(new(w.Key, data, rgba, w.Revision, missing, error, saveFailed, Texels: w.Key.Layer == 0 || w.Texels), stop.Token);
                 }
                 catch (OperationCanceledException) { break; }
                 catch (Exception e) { results.Add(new(w.Key, data ?? (w.Key.Layer == 1 ? new TileData() : null), null, w.Revision, w.Key.Layer == 0, e.Message, w.Key.Layer == 1 && w.Save), stop.Token); }

@@ -22,6 +22,9 @@ public sealed class AtlasInfo
     [ProtoMember(5)] public double Height;
     [ProtoMember(6)] public bool Wraps;
     [ProtoMember(7)] public bool Allowed;
+    /// <summary>With <see cref="Allowed"/> false: why the server declined (0.5.3, WM-0034), and its protocol.</summary>
+    [ProtoMember(42)] public string Declined;
+    [ProtoMember(43)] public int ServerProtocol;
     [ProtoMember(8)] public bool HasOverview;
     [ProtoMember(9)] public string Source;
     [ProtoMember(10)] public int SeaLevel;
@@ -89,6 +92,8 @@ public sealed class AtlasInfo
     /// <summary>How the heat maps are worked out: <see cref="OreHeatRequest.Reading"/> (the world's deposit generators
     /// answer the pick's question anywhere) or <see cref="OreHeatRequest.OreMap"/> (vanilla's region ore maps, loaded regions only).</summary>
     [ProtoMember(41)] public string OreHeatMethod;
+    /// <summary>A copy, for one player's info (AtlasServer.SendInfo): the shared one is never changed per player.</summary>
+    public AtlasInfo Copy() => (AtlasInfo)MemberwiseClone();
     public double ChartHeightRange => HeightRange > 0 ? HeightRange : Semantic.DefaultHeightRange;
     public const string EarthGeography = "earth";
     public Topology Topology() => new() { StartX = StartX, Width = Width, Height = Height, Wraps = Wraps };

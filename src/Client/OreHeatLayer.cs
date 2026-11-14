@@ -36,6 +36,7 @@ public sealed class OreHeatLayer : IDisposable
     // Tiles asked for and not yet answered, by when they were first asked.
     readonly Dictionary<Key, long> asked = new();
     List<TileInstance> visible = new();
+    (Topology, int, double, double, double, double) viewKey;
     int level = -1, viewHash, lastMillis;
     long viewSince, sentAt;
     /// <summary>An answer not back after this long (dropped, or replaced on the server by a newer view) is asked for again.</summary>
@@ -98,18 +99,24 @@ public sealed class OreHeatLayer : IDisposable
     public void View(Topology t, double x1, double z1, double x2, double z2, double pixelsPerBlock)
     {
         if (Code.Length == 0 || t == null) return;
-        level = OreHeat.LevelFor(t, pixelsPerBlock);
-        visible = OreHeat.Visible(t, x1, z1, x2, z2, level);
-        // Nearest the middle of the view first.
-        double cx = (x1 + x2) / 2, cz = (z1 + z2) / 2;
-        visible.Sort((a, b) => Distance(a).CompareTo(Distance(b)));
-        double Distance(TileInstance v) { double dx = v.X + v.Width / 2 - cx, dz = v.Z + v.Height / 2 - cz; return dx * dx + dz * dz; }
         long now = Environment.TickCount64;
-        var hash = new HashCode();
-        hash.Add(level);
-        foreach (var v in visible) { hash.Add(v.Key.X); hash.Add(v.Key.Z); }
-        int h = hash.ToHashCode();
-        if (h != viewHash) { viewHash = h; viewSince = now; }
+        // The tiles of the view again only when it moved or zoomed (0.5.3, WM-0042: a list and a sort every frame).
+        var key = (t, OreHeat.LevelFor(t, pixelsPerBlock), x1, z1, x2, z2);
+        if (key != viewKey)
+        {
+            viewKey = key;
+            level = key.Item2;
+            visible = OreHeat.Visible(t, x1, z1, x2, z2, level);
+            // Nearest the middle of the view first.
+            double cx = (x1 + x2) / 2, cz = (z1 + z2) / 2;
+            visible.Sort((a, b) => Distance(a).CompareTo(Distance(b)));
+            double Distance(TileInstance v) { double dx = v.X + v.Width / 2 - cx, dz = v.Z + v.Height / 2 - cz; return dx * dx + dz * dz; }
+            var hash = new HashCode();
+            hash.Add(level);
+            foreach (var v in visible) { hash.Add(v.Key.X); hash.Add(v.Key.Z); }
+            int h = hash.ToHashCode();
+            if (h != viewHash) { viewHash = h; viewSince = now; }
+        }
         if (now - viewSince < SettleMillis || now - sentAt < SettleMillis) return;
         var want = Wanted(t, now);
         if (want.Count == 0) return;
@@ -235,18 +242,17 @@ public sealed class OreHeatLayer : IDisposable
         if (i < 0) return null;
         float blocks = tile.Blocks[i], factor = tile.Factors[i];
         string coarse = tile.Derived ? string.Format(CultureInfo.InvariantCulture, " (from {0:0}-block cells until this tile arrives)", OreHeat.CellSize(tile.From)) : "";
-        if (float.IsNaN(blocks)) return Name(Code) + ": no answer here (the region is not loaded)" + coarse;
+        if (float.IsNaN(blocks)) return Name(Code) + (method == OreHeatRequest.OreMap ? ": no answer here (its chunk is not loaded)" : ": no answer here (not known yet)") + coarse;
         if (Code == OreHeat.Listed)
             return string.Format(CultureInfo.InvariantCulture, "The pick would list {0:0} ores here (strongest factor {1:0.000}){2}", blocks, factor, coarse);
         int word = OreHeat.WordIndex(factor);
         string pick = word < 0 ? "pick: miniscule amounts" : "pick: " + Lang.Get(OreHeat.WordKeys[word]);
-        string bound = method == OreHeatRequest.OreMap ? " (ore map, host rock not counted)" : "";
-        return string.Format(CultureInfo.InvariantCulture, "{0}: about {1} ore blocks per chunk{2} · {3} (factor {4:0.000}){5}", Name(Code), OreHeat.Short(blocks), bound, pick, factor, coarse);
+        return string.Format(CultureInfo.InvariantCulture, "{0}: about {1} ore blocks per chunk · {2} (factor {3:0.000}){4}", Name(Code), OreHeat.Short(blocks), pick, factor, coarse);
     }
 
     public void Dispose()
     {
         foreach (var tile in tiles.Values) tile.Texture?.Dispose();
-        tiles.Clear(); asked.Clear(); visible = new();
+        tiles.Clear(); asked.Clear(); visible = new(); viewKey = default;
     }
 }

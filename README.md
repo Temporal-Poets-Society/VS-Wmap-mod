@@ -1,6 +1,6 @@
-# World Map 0.5.3-rc.3 — release candidate
+# World Map 0.5.3
 
-> **In development.** This is a release candidate for 0.5.3; the last full release is 0.5.1. The mid-distance renderer remains experimental; client and multiplayer testing continues. Changes per version: [CHANGELOG](CHANGELOG.md); the first release: [release details and verification](docs/release-0.5.0.md).
+> **In development (0.x).** The mid-distance renderer remains experimental; client and multiplayer testing continues. Changes per version: [CHANGELOG](CHANGELOG.md); the first release: [release details and verification](docs/release-0.5.0.md).
 
 A standalone Vintage Story map for cylindrical worlds, Earth maps and ships. Zoom from the whole world down to a harbour without loading screens, pan east or west across Cylinder World's seam without a jump, and read latitude and longitude anywhere. Fast Map is not required.
 
@@ -24,7 +24,7 @@ Sextant fixes, surveying, the captain's chart table and course following are lat
 
 ## Install and open
 
-1. Quit the game completely, then copy `wmap_0.5.3-rc.3.zip` into your Vintage Story data directory's `Mods` folder, replacing any previous Wmap ZIP, then restart the game. On Windows this is `%APPDATA%\VintagestoryData\Mods`. Keep the ZIP intact.
+1. Quit the game completely, then copy `wmap_0.5.3.zip` into your Vintage Story data directory's `Mods` folder, replacing any previous Wmap ZIP, then restart the game. On Windows this is `%APPDATA%\VintagestoryData\Mods`. Keep the ZIP intact.
 2. For multiplayer, install the same ZIP on the server and every client. Client and server need the same World Map version: the network format changed in 0.5.2.
 3. Enter a world and press **M** (or your remapped world-map key), or type **`.wmap`**. **`.wmap vanilla`** opens the original map.
 
@@ -97,9 +97,9 @@ Wmap samples a 512 × 256 grid over the world in the background through Sea, wit
 
 Past the game's view distance, Wmap draws the world as a low, hazy 3D landscape out to `FarTerrainDistance` (8192 blocks): coasts, islands and mountain ranges on the horizon, the sea as a flat plane at the water's surface. It is lit by the game's sun and daylight and fades into the game's own sky colour and weather fog, so it disappears into the horizon at any time of day and in rain or fog. The game fades its own chunks out at 75–85 % of your view distance; far terrain starts there, slightly lower, so real terrain covers it where both exist. It wraps across Cylinder World's seam. Past your view distance it follows the planet's curve (0.4.11, the server's `PlanetScale`, worlds with geography; flat until then, like the game's own chunks fading into it): coasts sink below the horizon with distance, so from Athens you see the islands and Crete's mountains, not Africa, and from mid-Atlantic only the sea.
 
-**Near band** (0.4.0, Earth Map): out to `NearBandDistance` (1536 blocks) far terrain is drawn from 4-block detail tiles instead of the 25-block world chart, so hills, cliffs, valleys and coasts nearest the real chunks have their real shape and height (on land, half the points within 0.4 blocks of Earth's terrain, 95 % within 1.1; the chart alone: 1.8 and 9). Beyond it the chart takes over, blending over the last 336 blocks. **Climate colours** (0.4.0, Earth Map): land and sea take the game's own climate tints for grass, leaves and water, and forests stand about 8 blocks above the ground, from Earth's forest and climate. Without them far terrain keeps the atlas's Terrain colours. The tiles load nearest first, about 2 seconds for the whole band on a fresh world, and fade in.
+**Near band** (0.4.0, Earth Map): out to `NearBandDistance` (1536 blocks) far terrain is drawn from 4-block detail tiles instead of the world chart (25 to 489 blocks per texel by the world's scale), so hills, cliffs, valleys and coasts nearest the real chunks have their real shape and height (on land, half the points within 0.4 blocks of Earth's terrain, 95 % within 1.1; the chart alone: 1.8 and 9). Beyond it the chart takes over, blending over the last 336 blocks. **Climate colours** (0.4.0, Earth Map): land and sea take the game's own climate tints for grass, leaves and water, and forests stand about 8 blocks above the ground, from Earth's forest and climate; where you have been, at the height and with the gaps the recorder saw (0.5.3). High ground turns to scree, rock and snow by its climate, not by its height (0.5.3). Far land is lit with the game's own numbers for its chunks (0.5.3; `.wmap fardebug albedo|lit|off` shows its colour alone, or lit without haze, to compare it on screen). Without them far terrain keeps the atlas's Terrain colours. The tiles load nearest first, about 2 seconds for the whole band on a fresh world, and fade in.
 
-It is the same world chart the atlas already downloaded, displaced on the GPU: one draw call, about 2.6 MiB of GPU buffers with the near band (1.6 MiB without). The near band and climate tiles cost the server about 43 ms per tile once (cached on disk, shared by players), about 0.4 MiB of downloads for a full band, 12.4 MiB of textures, and on an RX 6600 about 0.3 ms per frame (0.1 ms without). It needs a world chart with relief, so it needs Earth Map (Cylinder World alone predicts only coastlines, with invented heights), and players without the `wmap` privilege on a server with `ShareWorldChart: false` do not get it. It shows predicted terrain, not structures or player edits, and like real sight it is not limited by exploration. Detail is limited by the chart: about 25 blocks per texel on a 204,800-block ring.
+It is the same world chart the atlas already downloaded, displaced on the GPU: one draw call, about 2.6 MiB of GPU buffers with the near band (1.6 MiB without). The near band and climate tiles cost the server about 43 ms per tile once (cached on disk, shared by players), about 0.4 MiB of downloads for a full band, 12.4 MiB of textures, and on an RX 6600 about 0.3 ms per frame (0.1 ms without). It needs a world chart with relief, so it needs Earth Map (Cylinder World alone predicts only coastlines, with invented heights), and players without the `wmap` privilege on a server with `ShareWorldChart: false` do not get it. It shows predicted terrain, not structures or player edits, and like real sight it is not limited by exploration. Detail is limited by the chart: the ring's length / 8192 blocks per texel (about 25 on a 204,800-block ring, 49 on Earth's default 1:100 ring, 489 at 1:10).
 
 Wmap raises the game's camera far plane (normally 3000 blocks) while far terrain is drawn. If Farseer is installed, Wmap leaves far terrain to it. The [design note](docs/far-terrain.md) covers the mesh, costs and risks.
 
@@ -119,13 +119,13 @@ What it cannot show: overhangs, bridges and arches (one height per cell), thin t
 
 ## How it draws
 
-The server samples the world's terrain generator once into an **8192 × 4096 world chart** (about 25 blocks per texel on the ring above). Each texel stores *meaning*, not color: distance to the coast, height relative to the sea, ice, and distance to the nearest river. The client uploads it as one OpenGL texture with a full mipmap chain and wrap-around addressing, and a shader evaluates the chosen style for every screen pixel. That is why:
+The server samples the world's terrain generator once into an **8192 × 4096 world chart** (the ring's length / 8192 blocks per texel: about 49 on Earth's default 1:100 ring). Each texel stores *meaning*, not color: distance to the coast, height relative to the sea, ice, and distance to the nearest river. The client uploads it as one OpenGL texture with a full mipmap chain and wrap-around addressing, and a shader evaluates the chosen style for every screen pixel. That is why:
 
 - zooming within the world chart's resolution requires no new terrain data, and ink lines retain their screen thickness;
 - the seam is continuous; the texture simply repeats;
 - switching style, or later adding styles, never re-renders tiles.
 
-The image has a finite resolution: about 25 blocks per texel on a 204,800-block ring, or 62 on a 510,976-block ring. Magnification cannot recover smaller features from it. Below half that spacing in blocks per screen pixel, **detail tiles** (128 × 128 texels, at progressively finer block spacing) are sampled on demand by the server and saved on both sides. These are cached terrain images at several resolutions, drawn by the same shader. The whole set of fine levels is not baked in advance: each doubling of world-image resolution would quadruple its pixel count.
+The image has a finite resolution: about 25 blocks per texel on a 204,800-block ring, 49 on Earth 2.0's default 1:100 ring (400,384 blocks), 489 at 1:10. Magnification cannot recover smaller features from it. Below half that spacing in blocks per screen pixel, **detail tiles** (128 × 128 texels, at progressively finer block spacing) are sampled on demand by the server and saved on both sides. These are cached terrain images at several resolutions, drawn by the same shader. The whole set of fine levels is not baked in advance: each doubling of world-image resolution would quadruple its pixel count.
 
 Uploaded detail from neighbouring levels fills gaps while the new zoom loads. Its GPU copy survives eviction of its decoded CPU copy, within the separate GPU cache limit. Returning to an uploaded view can therefore draw immediately; reloading identical disk data preserves that image, while changed terrain replaces it. An evicted GPU image reloads its saved tile from disk. Receiving the world chart no longer replaces local hill shading with coarse regional shading. New areas still require their first detail generation, and drawing the style per pixel adjusts its ink patterns during zoom. Without Earth Map or Cylinder World there is no world chart; terrain recorded around you is drawn through the same styles instead.
 
@@ -152,6 +152,8 @@ In gameplay the chart reveals what you have seen. By default (`ExploreBySight`, 
 With `ShareWorldChart` (the default), every player receives the world chart and predicted detail, and gameplay hides what they have not explored. A modified client could show it anyway. Set it to `false` on a server where that matters: ordinary players then see only their own recorded terrain.
 
 ## Ore heat maps (Creative)
+
+Switched off by default (`OreHeatMaps: false` in the server's `wmap.json`): on Earth's default ores the map can show ore the prospecting pick does not find (WM-0025). Set it to `true` to use what follows.
 
 On the Creative map (creative mode, the `wmap` privilege or `AllowAllPlayers`), **Ore heat** colours the map by one ore, for checking or debugging ore generation (client and server). The map follows every zoom: zoomed in, each cell is one chunk; zoomed out, cells grow so they stay about 10 pixels or more. The server works the map out in tiles, every ore at once, and stores them with the world's map tiles, so a place is worked out once and switching ores is instant. On an Earth world, choosing an ore the first time also stores the coarse levels of the whole world in the background. A tile not there yet is drawn from a coarser one, in its larger cells, until it arrives; the status line counts the tiles still being worked out, the legend sits at the top right and the line under the map says what the cell under the cursor holds.
 
@@ -215,6 +217,7 @@ The world settings under **Customize > Earth** offer **Wmap: shared world chart*
 | `FarTerrainDetail` | `1` | Client: far terrain mesh, 0 low, 1 normal, 2 high (finer near rings; little gain on large worlds; the near band uses its own finer rings) |
 | `FarTerrainNearBand` | `true` | Client: draw far terrain from 4-block detail tiles out to `NearBandDistance` (Earth Map; client and server 0.4.0) |
 | `NearBandDistance` | `1536` | Client: blocks to the near band's outer edge (768–1536) |
+| `OreHeatMaps` | `false` | Server: ore heat maps on the full map and `/wmapore` (off until WM-0025 is fixed) |
 | `FarTerrainClimate` | `true` | Client: the game's climate colours and forest canopy on far terrain (Earth Map; client and server 0.4.0) |
 | `MidDistanceRecorded` | `true` | Client (prototype): record every loaded chunk out to the view distance with colours and light, and draw recorded terrain and structures in far terrain |
 | `MidDistanceTerraces` | `true` | Client (prototype): terraces from far terrain's start to `TerraceDistance` |

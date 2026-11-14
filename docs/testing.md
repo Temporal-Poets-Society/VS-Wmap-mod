@@ -2,6 +2,22 @@
 
 Updated 2026-10-16. Test environment: Windows 11, Vintage Story 1.22.7, .NET SDK 8.0.419 and runtime 10.0, AMD Radeon RX 6600, 16-core/32-thread CPU.
 
+## 0.5.3: release build
+
+14 November 2026, worktrees `relief`, `review` and `cwbind`, merged into `main`. After rc.14: recorded relief (WM-0021, WM-D61), the fixes of a code review of `main` (WM-0030 to WM-0042), Cylinder World bound by signatures (WM-0043), and two re-reviews of those fixes, the second with nothing open. Then the version became 0.5.3 (WM-D62).
+
+* Core suite: **108832 assertions PASS** (recorded relief: the cell mean on a slope, a river bank and a ledge; the shaders' constants against C#; the terrace and smooth-mesh mirrors on WM-D61's rule). A failed check now lists every failure with its line (WM-0041).
+* GPU compile check (RX 6600, the game's 1.22.7 includes): every far program compiles and links, low and high settings.
+* Earth smoke (isolated server, Earth on GLO-90, Cylinder World 1.1.0-rc.4, Hydrology, Sea 0.6.0-rc.2):
+  * recorded relief alone (`a9e1086`): recorded ground within a block of the generated heights at 600 blocks 91.1 % of 2,163 px (86.7 % before, prediction alone 54.2 %); failed only the tile client's allocations (26,821 bytes a tick, WM-0030);
+  * review fixes to WM-0035 (`2d98bee`): **PASS**; tile client 6,254 bytes a tick; far terrain 160 bytes a frame standing and 1,668 walking (544 and 2,052 before); GPU at 600 blocks 1.13 ms with the mid-distance view (1.26), smooth mesh 0.54 ms (0.64), far terrain alone 0.64 ms (0.76);
+  * all review fixes (`f09a389`): **PASS**; tile client 10,883 bytes a tick, recorded ground 91.1 % at 600 blocks;
+  * 0.5.3 (`36e61e3`, with a test build of Earth `main` `0e53278`, Hydrology 0.6.2-rc.13): **PASS**; tile client 5,540 bytes a tick; far terrain 160 bytes a frame standing and 1,668 walking; recorded ground within a block at 600 blocks 91.1 % of 2,135 px (prediction alone 53.0 %); GPU at 600 blocks 1.13 ms with the mid-distance view.
+* Bench looks (my own bench, port 42487, 1:10 Earth worlds, the Engadin at 46.50 N 9.86 E in July, 600 blocks east at y 430 looking west):
+  * review fixes with Earth 2.0.0-rc.13: the far view draws as before at noon and in the evening, also after the game's shader reload; the atlas opens with its detail tiles (78, none pending);
+  * 0.5.3 with Earth `main` `0e53278`, Cylinder World 1.1.0-rc.4 and Hydrology 0.6.2-rc.13: the atlas started with "Earth terrain prediction + Earth polar ice/walls" (Cylinder World bound by signatures) and no warnings; the far view as before; the atlas with the barometer (1011 hPa). Again in a new world with a test build of Cylinder World `main` `ea5014b` (CW-0011, the saved `FlattenSeabed`): the same start line and no warnings, the far view and the atlas as before.
+* Not checked: a client and server of different versions (WM-0034's message), an Earth with a renamed member (WM-0033), multiplayer, NVIDIA or Intel GPUs.
+
 ## 0.5.2: grid labels in the readout's format, installed
 
 12 November 2026, same worktree. The author's screenshot (St Lawrence Island, 1:50 world, 0.5 blocks per pixel, decimal degrees chosen): "map longitude numbers does not match what hud coordinates are showing". Measured on the screenshot, the player's arrow lies 2.9′ west of the 169°30′W line, at about 169.452° W; the readouts said 169.4513° W, so the lines and readouts agreed. The labels were always in degrees and minutes (169°45′W, 169°30′W, 169°15′W), whatever the ° / °′ button said, and 169°45′W read like the readout's 169.45.

@@ -49,6 +49,8 @@ public sealed class RecordedTiles : IDisposable
         public byte[] Rgba;
         public float[] Boxes;
         public LightPoint[] Lights;
+        /// <summary>Four-block tiles: the recorded treetop heights (RecordedTexels.CanopyHistogram).</summary>
+        public int[] Canopy;
     }
     sealed record Work(TileKey Key, TileData Data, string Path, long Version, bool Texels);
     sealed record Result(TileKey Key, Derived Derived, string Error);
@@ -96,6 +98,9 @@ public sealed class RecordedTiles : IDisposable
     public long Uploads, DiskReads;
     /// <summary>Recorded tiles in the four-block and two-block windows, and how many are in their slots.</summary>
     public int CoarseWanted, CoarseReady, FineWanted, FineReady;
+    /// <summary>The middle treetop height of the recorded forest in the four-block window (0.5.3-rc.8), and over how many
+    /// cells: far terrain stands its predicted forest at it, so the recorded and the predicted canopy meet without a step.</summary>
+    public int CanopyHeight, CanopyCells;
 
     public RecordedTiles(Topology topology, ISource source)
     {
@@ -134,7 +139,7 @@ public sealed class RecordedTiles : IDisposable
     /// <summary>GPU bytes of the atlases.</summary>
     public static long TextureBytes => (long)AtlasWidth * AtlasHeight * (8 + 4) + 16 * 8 * 16;
 
-    readonly float[] slotTexels = new float[16 * 8 * 4];
+    readonly float[] slotTexels = new float[16 * 8 * 4], uploadedSlots = new float[16 * 8 * 4];
     float[] SlotTexels()
     {
         for (int level = 0; level < 2; level++)
@@ -236,16 +241,29 @@ public sealed class RecordedTiles : IDisposable
         }
         CoarseSlots.UpdateFades(now); FineSlots.UpdateFades(now);
         (CoarseWanted, CoarseReady) = Place(CoarseSlots, coarseCells, 0, now, ref uploads);
+        CanopyHeight = MedianCanopy(out CanopyCells);
         (FineWanted, FineReady) = Place(FineSlots, fineCells, 1, now, ref uploads);
-        if (SlotTexture != 0)
+        // The slot texture again only when a slot or its fade changed (0.5.3, WM-0035: every frame).
+        if (SlotTexture != 0 && !SlotTexels().AsSpan().SequenceEqual(uploadedSlots))
         {
             using var unpack = new GlUnpack();
             GL.BindTexture(TextureTarget.Texture2D, SlotTexture);
-            GL.TexSubImage2D(TextureTarget.Texture2D, 0, 0, 0, 16, 8, PixelFormat.Rgba, PixelType.Float, SlotTexels());
+            GL.TexSubImage2D(TextureTarget.Texture2D, 0, 0, 0, 16, 8, PixelFormat.Rgba, PixelType.Float, slotTexels);
+            slotTexels.CopyTo(uploadedSlots, 0);
         }
         if (boxesDirty) RebuildBoxes();
         if (lightsDirty) RebuildLights();
     }
+
+    /// <summary>The coarse window's median canopy (<see cref="RecordedTexels.MedianOf"/>), summed into one array kept for it.</summary>
+    int MedianCanopy(out int cells)
+    {
+        Array.Clear(canopySum);
+        foreach (var cell in coarseCells)
+            if (derived.TryGetValue(cell.Key, out var d)) RecordedTexels.AddCanopy(canopySum, d.Canopy);
+        return RecordedTexels.MedianOf(canopySum, out cells);
+    }
+    readonly int[] canopySum = new int[RecordingRules.MaxCanopy + 1];
 
     (int Wanted, int Ready) Place(SlotTable slots, List<FarTileWindow.Cell> cells, int level, long now, ref int uploads)
     {
@@ -360,6 +378,7 @@ public sealed class RecordedTiles : IDisposable
             if (pool.TryTake(out var reuse)) (d.Heights, d.Rgba) = reuse;
             else { d.Heights = new Half[TileData.Count * RecordedTexels.Halves]; d.Rgba = new byte[TileData.Count * 4]; }
             RecordedTexels.Build(data, d.Heights, d.Rgba);
+            if (key.Level != FineLevel) d.Canopy = RecordedTexels.CanopyHistogram(data);
         }
         if (key.Level == FineLevel)
         {
@@ -423,7 +442,8 @@ public sealed class TileClientRecordings : RecordedTiles.ISource
     public TileData Resident(TileKey key, out long version)
     {
         var e = tiles.Peek(key);
-        version = e == null ? 0 : ((long)System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(e) << 32) | (uint)e.Revision;
+        // The entry's own number and its revision (0.5.3, WM-0042: its identity hash, which two entries can share).
+        version = e == null ? 0 : (e.Id << 32) | (uint)e.Revision;
         return e?.Data;
     }
     public string PathFor(TileKey key) => tiles.RecordingPath(key);

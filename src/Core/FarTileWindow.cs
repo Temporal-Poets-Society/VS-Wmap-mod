@@ -21,6 +21,9 @@ public sealed class FarTileWindow
     public const int AtlasTexels = Slots * SlotTexels;
     /// <summary>A slot key that matches no tile.</summary>
     public const int Empty = int.MinValue / 2;
+    /// <summary>Blocks over which detail fades out toward a tile that is missing or still fading in (wmapReadyAt); a seam
+    /// tile narrower than this is reached from two tiles away.</summary>
+    public const int SeamReach = 48;
 
     public readonly Topology Topology;
     public readonly int Level;

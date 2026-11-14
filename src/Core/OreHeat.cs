@@ -308,4 +308,27 @@ public static class OreHeat
         if (blocks < 10000) return (blocks / 1000).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + "k";
         return (blocks / 1000).ToString("0", System.Globalization.CultureInfo.InvariantCulture) + "k";
     }
+
+    /// <summary>The pick's share of host blocks in a rock column (vanilla's <c>DiscDepositGenerator.oreBearingBlockQuantityRelative</c>,
+    /// WM-0025): the blocks within the deposit's height band that host it, over the whole column. Band kinds as the
+    /// generators draw them: 1 from bandMin x the surface to the surface (following the surface), 2 bandMin to bandMax as
+    /// they are (following the sea level, anywhere), 3 the surface less bandMax to the surface (below the surface), 0 the
+    /// whole column. No host list: every block hosts it (1).</summary>
+    public static double HostShare(int[] column, ICollection<int> hosts, int bandKind, double bandMin, double bandMax, int top)
+    {
+        if (hosts == null) return 1;
+        if (column == null || column.Length == 0) return 0;
+        double low, high;
+        switch (bandKind)
+        {
+            case 1: low = bandMin * top; high = top; break;
+            case 2: low = bandMin; high = bandMax; break;
+            case 3: low = top - bandMax; high = top; break;
+            default: low = double.MinValue; high = double.MaxValue; break;
+        }
+        int n = 0;
+        for (int j = 0; j < column.Length; j++)
+            if (j >= low && j <= high && hosts.Contains(column[j])) n++;
+        return (double)n / column.Length;
+    }
 }

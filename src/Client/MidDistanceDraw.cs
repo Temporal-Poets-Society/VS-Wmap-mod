@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using OpenTK.Graphics.OpenGL;
 using Wmap.Core;
 
@@ -151,12 +152,12 @@ public sealed class MidDistanceDraw : IDisposable
     {
         static bool Fading(float[] fades) { foreach (float v in fades) if (v > 0 && v < 1) return true; return false; }
         var tiles = f.Tiles; var rec = f.Recorded;
-        if ((tiles?.Band != null && Fading(tiles.Band.SlotFade)) || (tiles?.Climate != null && Fading(tiles.Climate.SlotFade))
+        if ((tiles?.Band != null && Fading(tiles.Band.Slots.Fade)) || (tiles?.Climate != null && Fading(tiles.Climate.Slots.Fade))
             || (rec != null && (Fading(rec.CoarseSlots.Fade) || Fading(rec.FineSlots.Fade))))
             return ++fadingFrame;
         var (ox, oz) = FarTerrainDraw.Origin(mesh, f.CameraX, f.CameraZ);
         var hash = new HashCode();
-        hash.Add(f.CellMapX); hash.Add(f.CellMapZ); hash.Add(ox); hash.Add(oz); hash.Add(f.Start); hash.Add(f.DrawFrom); hash.Add(f.TerraceRadius);
+        hash.Add(f.CellMapX); hash.Add(f.CellMapZ); hash.Add(ox); hash.Add(oz); hash.Add(f.Start); hash.Add(f.DrawFrom); hash.Add(f.TerraceRadius); hash.Add(f.Canopy);
         hash.Add(tiles?.Uploads ?? -1); hash.Add(tiles?.OriginLap ?? 0); hash.Add(rec?.Uploads ?? -1); hash.Add(rec?.Lap ?? 0); hash.Add(rec != null);
         return (long)(hash.ToHashCode() & 0x7FFFFFFF) << 20;
     }
@@ -193,6 +194,15 @@ public sealed class MidDistanceDraw : IDisposable
     /// into the ring from far terrain's start to the terraces' edge and into the view.</summary>
     public void DrawTerraces(int program, FarTerrainDraw common, FarFrame f, double worldTop)
     {
+        // Culled and uploaded once per frame (0.5.3, WM-0031): later passes of the same frame draw the same patches.
+        if (f.Stamp != 0 && f.Stamp == patchesFrame)
+        {
+            if (Patches == 0 || !common.Bind(program, f, 1, f.DrawFrom, f.TerraceRadius + FarFrame.JoinOverlap)) return;
+            Instanced(patchVao, patchIndexCount, Patches);
+            common.Unbind();
+            return;
+        }
+        patchesFrame = f.Stamp;
         Patches = 0;
         if (!Ready || f.TerraceRadius <= f.Start) return;
         var (ox, oz) = FarTerrainDraw.Origin(common.Mesh, f.CameraX, f.CameraZ);
@@ -244,18 +254,11 @@ public sealed class MidDistanceDraw : IDisposable
     }
 
     static readonly float[] One = new float[1];
+    long patchesFrame;
 
     static void Instanced(int vao, int indices, int instances)
     {
-        bool cull = GL.IsEnabled(EnableCap.CullFace), blend = GL.IsEnabled(EnableCap.Blend);
-        GL.Disable(EnableCap.CullFace);
-        GL.Disable(EnableCap.Blend);
-        GL.GetInteger(GetPName.VertexArrayBinding, out int previousVao);
-        GL.BindVertexArray(vao);
-        GL.DrawElementsInstanced(PrimitiveType.Triangles, indices, DrawElementsType.UnsignedInt, IntPtr.Zero, instances);
-        GL.BindVertexArray(previousVao);
-        if (cull) GL.Enable(EnableCap.CullFace);
-        if (blend) GL.Enable(EnableCap.Blend);
+        using (new GlDraw(vao)) GL.DrawElementsInstanced(PrimitiveType.Triangles, indices, DrawElementsType.UnsignedInt, IntPtr.Zero, instances);
     }
 
     /// <summary>Draws the distant lights with <paramref name="program"/> (farlights, current): added to what is drawn,
@@ -302,10 +305,21 @@ public sealed class MidDistanceDraw : IDisposable
         Lights = lightCount;
     }
 
-    // Uniforms of the lights' program; methods, not local functions, so a frame allocates no closures.
-    static void Set4(int program, string name, double x, double y, double z, double w) { int l = GL.GetUniformLocation(program, name); if (l >= 0) GL.Uniform4(l, (float)x, (float)y, (float)z, (float)w); }
-    static void Matrix(int program, string name, float[] m) { int l = GL.GetUniformLocation(program, name); if (l >= 0) GL.UniformMatrix4(l, 1, false, m); }
-    static void Set1(int program, string name, float x) { int l = GL.GetUniformLocation(program, name); if (l >= 0) GL.Uniform1(l, x); }
+    // Uniforms of the lights' program; methods, not local functions, so a frame allocates no closures. Their locations are
+    // looked up once per program (0.5.3, WM-0040: every frame).
+    void Set4(int program, string name, double x, double y, double z, double w) { int l = Location(program, name); if (l >= 0) GL.Uniform4(l, (float)x, (float)y, (float)z, (float)w); }
+    void Matrix(int program, string name, float[] m) { int l = Location(program, name); if (l >= 0) GL.UniformMatrix4(l, 1, false, m); }
+    void Set1(int program, string name, float x) { int l = Location(program, name); if (l >= 0) GL.Uniform1(l, x); }
+    readonly Dictionary<string, int> lightLocations = new();
+    int lightProgram;
+    int Location(int program, string name)
+    {
+        if (program != lightProgram) { lightLocations.Clear(); lightProgram = program; }
+        if (!lightLocations.TryGetValue(name, out int l)) lightLocations[name] = l = GL.GetUniformLocation(program, name);
+        return l;
+    }
+    /// <summary>The shaders were loaded again: a program may keep its id with other locations.</summary>
+    public void ProgramReloaded() { lightLocations.Clear(); lightProgram = 0; }
 
     readonly float[] viewProjection = new float[16];
     static readonly (int Row, int Sign)[] Planes = { (0, 1), (0, -1), (1, 1), (1, -1), (2, 1), (2, -1) };

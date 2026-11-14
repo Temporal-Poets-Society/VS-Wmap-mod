@@ -7,7 +7,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using OpenTK.Graphics.OpenGL;
 using Wmap.Core;
-using Wmap.Server;
 
 namespace Wmap.Client;
 
@@ -31,14 +30,13 @@ public sealed class FarTiles : IDisposable
         public readonly FarTileWindow Window;
         public readonly int Content;
         public readonly double Radius;
-        /// <summary>GL textures: semantic (band only) and biome. 0 when unused.</summary>
-        public int SemanticTexture, BiomeTexture;
-        /// <summary>Per slot (x + 8·z): the unwrapped tile id and row it holds, as the shader checks them.</summary>
-        public readonly int[] SlotKeys = new int[FarTileWindow.Slots * FarTileWindow.Slots * 2];
-        public readonly TileKey?[] SlotTiles = new TileKey?[FarTileWindow.Slots * FarTileWindow.Slots];
-        /// <summary>Per slot, 0..1: how far its tile has faded in since it arrived, so new detail does not pop.</summary>
-        public readonly float[] SlotFade = new float[FarTileWindow.Slots * FarTileWindow.Slots];
-        internal readonly long[] SlotSince = new long[FarTileWindow.Slots * FarTileWindow.Slots];
+        /// <summary>GL textures: semantic (band only), biome, and the biome tiles' grass season (climate tiles only, 0.5.3-rc.5).
+        /// 0 when unused.</summary>
+        public int SemanticTexture, BiomeTexture, SeasonTexture;
+        /// <summary>Per slot (x + 8·z): the unwrapped tile id and row it holds, as the shader checks them, the tile, and how far
+        /// it has faded in since it arrived, so new detail does not pop. The recorded tiles' table (0.5.3, WM-0036: these
+        /// layers kept their own copy of it).</summary>
+        public readonly SlotTable Slots = new();
         internal readonly Dictionary<TileKey, Decoded> Cache = new();
         internal readonly Dictionary<TileKey, long> InFlight = new();
         internal readonly Dictionary<TileKey, long> RetryAt = new();
@@ -55,11 +53,10 @@ public sealed class FarTiles : IDisposable
         public Layer(FarTileWindow window, int content, double radius)
         {
             Window = window; Content = content; Radius = radius;
-            Array.Fill(SlotKeys, FarTileWindow.Empty);
         }
         public bool Semantic => TileContent.HasSemantic(Content);
     }
-    internal sealed class Decoded { public byte[] Semantic, Biome; public long Used; }
+    internal sealed class Decoded { public byte[] Semantic, Biome, Season; public long Used; }
     sealed record Work(TileKey Key, Layer Layer, byte[] Semantic, byte[] Biome, bool Save);
     sealed record Result(TileKey Key, Layer Layer, byte[] Semantic, byte[] Biome, bool Missing, string Error, bool Network);
 
@@ -70,7 +67,7 @@ public sealed class FarTiles : IDisposable
     readonly Action<TileRequest> send;
     readonly string session, folder, biomeId;
     /// <summary>Seconds a newly arrived tile takes to fade in.</summary>
-    public const double FadeSeconds = 1.5;
+    public const double FadeSeconds = SlotTable.FadeMs / 1000.0;
     readonly int diskCacheMiB;
     readonly BlockingCollection<Work> work = new(64);
     readonly BlockingCollection<Result> results = new(64);
@@ -83,8 +80,8 @@ public sealed class FarTiles : IDisposable
     /// <summary>The far-terrain origin's lap in tile ids. Kept across seam crossings: crossing the seam moves the
     /// origin's position by a whole circumference but not this count, so resident tiles keep their ids and slots
     /// (when tiles per lap is not a multiple of 8, a new count would move them all). The shader adds it too.</summary>
-    public int OriginLap { get; private set; }
-    double lastOriginRel = double.NaN;
+    public int OriginLap => lap.Lap;
+    readonly LapCounter lap = new();
     public long Received, DiskHits, Uploads;
 
     /// <param name="send">Sends a far-terrain tile request (Stream 1) to the server.</param>
@@ -114,6 +111,7 @@ public sealed class FarTiles : IDisposable
     /// 336-block fade at its edge, the fog at the climate's, and the 64-block margin of the inner edge.</summary>
     public const double Reselect = 16;
     long expireAt;
+    readonly List<TileKey> expired = new();
 
     /// <summary>The prediction at a world point from a decoded near-band tile (4-block texels), main thread: its stored
     /// height (<see cref="Semantic"/>) and whether it is water. False where no band tile is decoded.</summary>
@@ -155,6 +153,7 @@ public sealed class FarTiles : IDisposable
         {
             if (layer.Semantic && layer.SemanticTexture == 0) layer.SemanticTexture = Create();
             if (layer.BiomeTexture == 0) layer.BiomeTexture = Create();
+            if (layer == Climate && layer.SeasonTexture == 0) layer.SeasonTexture = Create();
         }
     }
 
@@ -166,21 +165,9 @@ public sealed class FarTiles : IDisposable
     {
         if (disposed) return;
         long now = Environment.TickCount64;
-        foreach (var layer in layers)
-            for (int slot = 0; slot < layer.SlotFade.Length; slot++)
-                layer.SlotFade[slot] = layer.SlotTiles[slot] == null ? 0 : (float)Math.Clamp((now - layer.SlotSince[slot]) / (FadeSeconds * 1000), 0, 1);
+        foreach (var layer in layers) layer.Slots.UpdateFades(now);
         for (int i = 0; i < 16 && results.TryTake(out var r); i++) Take(r, now);
-        if (Topology.Wraps)
-        {
-            double rel = Topology.Mod(originX - Topology.StartX, Topology.Width);
-            // Half a circumference in one step: the origin crossed the seam (the game moved the player one lap).
-            if (!double.IsNaN(lastOriginRel))
-            {
-                if (rel - lastOriginRel > Topology.Width / 2) OriginLap--;
-                else if (lastOriginRel - rel > Topology.Width / 2) OriginLap++;
-            }
-            lastOriginRel = rel;
-        }
+        lap.Update(Topology, originX);
         bool expire = now >= expireAt;
         if (expire) expireAt = now + 1000;
         foreach (var layer in layers)
@@ -204,22 +191,33 @@ public sealed class FarTiles : IDisposable
             }
             layer.Wanted = layer.Cells.Count; layer.Ready = 0;
             var wanted = layer.WantedKeys;
+            // Retries that are due are forgotten (0.5.3, WM-0042: the list only grew).
+            if (expire && layer.RetryAt.Count > 0)
+            {
+                expired.Clear();
+                foreach (var p in layer.RetryAt) if (now >= p.Value) expired.Add(p.Key);
+                foreach (var k in expired) layer.RetryAt.Remove(k);
+            }
             if (expire && layer.InFlight.Count > 0)
                 foreach (var key in layer.InFlight.Where(p => now - p.Value > 15000).Select(p => p.Key).ToArray()) layer.InFlight.Remove(key);
             int requested = layer.InFlight.Count;
+            var slots = layer.Slots;
             foreach (var cell in layer.Cells)
             {
-                int slot = FarTileWindow.Slot(cell.Id) + FarTileWindow.Slots * FarTileWindow.Slot(cell.Z);
-                bool placed = layer.SlotKeys[slot * 2] == cell.Id && layer.SlotKeys[slot * 2 + 1] == cell.Z && layer.SlotTiles[slot] == cell.Key;
+                int slot = SlotTable.SlotOf(cell.Id, cell.Z);
                 if (layer.Cache.TryGetValue(cell.Key, out var decoded)) decoded.Used = ++clock;
-                if (placed) { layer.Ready++; continue; }
+                if (slots.Keys[slot] == cell.Key)
+                {
+                    // In its slot, perhaps under the id of another lap: the texels stand, also when the decoded copy is gone.
+                    if (!slots.Holds(cell)) slots.Rekey(cell);
+                    layer.Ready++;
+                    continue;
+                }
                 if (decoded != null)
                 {
-                    if (layer.SlotTiles[slot] == cell.Key) { layer.SlotKeys[slot * 2] = cell.Id; layer.SlotKeys[slot * 2 + 1] = cell.Z; continue; }
                     if (uploads <= 0) continue;
                     Upload(layer, slot, decoded);
-                    layer.SlotTiles[slot] = cell.Key; layer.SlotKeys[slot * 2] = cell.Id; layer.SlotKeys[slot * 2 + 1] = cell.Z;
-                    layer.SlotSince[slot] = now; layer.SlotFade[slot] = 0;
+                    slots.Place(cell, 0, now);
                     layer.Ready++;
                     uploads--; Uploads++;
                     continue;
@@ -269,7 +267,10 @@ public sealed class FarTiles : IDisposable
             if (layer.NotOnDisk.Count > 4 * CachedPerLayer) layer.NotOnDisk.Clear();
             return;
         }
-        layer.Cache[r.Key] = new Decoded { Semantic = r.Semantic, Biome = r.Biome, Used = ++clock };
+        // A biome tile carries its grass season below the biome (BiomeTile format 102).
+        byte[] biome = r.Biome, season = null;
+        if (biome?.Length == 2 * BiomeTile.HalfBytes) { season = biome[BiomeTile.HalfBytes..]; biome = biome[..BiomeTile.HalfBytes]; }
+        layer.Cache[r.Key] = new Decoded { Semantic = r.Semantic, Biome = biome, Season = season, Used = ++clock };
     }
 
     static readonly byte[] Blank = new byte[FarTileWindow.SlotTexels * FarTileWindow.SlotTexels * 4];
@@ -289,6 +290,7 @@ public sealed class FarTiles : IDisposable
         }
         Put(layer.SemanticTexture, decoded.Semantic);
         Put(layer.BiomeTexture, decoded.Biome);
+        Put(layer.SeasonTexture, decoded.Season);
     }
 
     /// <summary>A far-terrain response from the server. Main thread.</summary>
@@ -335,7 +337,7 @@ public sealed class FarTiles : IDisposable
                         {
                             if (packedSemantic != null) TileCodec.WriteAtomic(semanticPath, packedSemantic);
                             if (packedBiome != null && biomePath != null) TileCodec.WriteAtomic(biomePath, packedBiome);
-                            AtlasServer.Wrote(folder, (packedSemantic?.Length ?? 0) + (biomePath != null ? packedBiome?.Length ?? 0 : 0), diskCacheMiB);
+                            TileCache.Wrote(folder, (packedSemantic?.Length ?? 0) + (biomePath != null ? packedBiome?.Length ?? 0 : 0), diskCacheMiB);
                         }
                         catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { error = "Far terrain cache write: " + e.Message; }
                     }
@@ -364,46 +366,8 @@ public sealed class FarTiles : IDisposable
         {
             if (layer.SemanticTexture != 0) GL.DeleteTexture(layer.SemanticTexture);
             if (layer.BiomeTexture != 0) GL.DeleteTexture(layer.BiomeTexture);
-            layer.SemanticTexture = layer.BiomeTexture = 0;
+            if (layer.SeasonTexture != 0) GL.DeleteTexture(layer.SeasonTexture);
+            layer.SemanticTexture = layer.BiomeTexture = layer.SeasonTexture = 0;
         }
-    }
-}
-
-/// <summary>
-/// Client memory to a texture with the GL state the game may have left: saves the active unit's 2D texture binding,
-/// the pixel-unpack buffer and the unpack alignment, row length and skips; sets the defaults (no buffer, alignment 4,
-/// tight rows) for the upload; and puts them all back when disposed. Render thread.
-/// </summary>
-public readonly struct GlUnpack : IDisposable
-{
-    readonly int texture, buffer, alignment, rowLength, skipPixels, skipRows, imageHeight, skipImages;
-    public GlUnpack()
-    {
-        GL.GetInteger(GetPName.TextureBinding2D, out texture);
-        GL.GetInteger(GetPName.PixelUnpackBufferBinding, out buffer);
-        GL.GetInteger(GetPName.UnpackAlignment, out alignment);
-        GL.GetInteger(GetPName.UnpackRowLength, out rowLength);
-        GL.GetInteger(GetPName.UnpackSkipPixels, out skipPixels);
-        GL.GetInteger(GetPName.UnpackSkipRows, out skipRows);
-        GL.GetInteger(GetPName.UnpackImageHeight, out imageHeight);
-        GL.GetInteger(GetPName.UnpackSkipImages, out skipImages);
-        if (buffer != 0) GL.BindBuffer(BufferTarget.PixelUnpackBuffer, 0);
-        GL.PixelStore(PixelStoreParameter.UnpackAlignment, 4);
-        GL.PixelStore(PixelStoreParameter.UnpackRowLength, 0);
-        GL.PixelStore(PixelStoreParameter.UnpackSkipPixels, 0);
-        GL.PixelStore(PixelStoreParameter.UnpackSkipRows, 0);
-        GL.PixelStore(PixelStoreParameter.UnpackImageHeight, 0);
-        GL.PixelStore(PixelStoreParameter.UnpackSkipImages, 0);
-    }
-    public void Dispose()
-    {
-        GL.BindTexture(TextureTarget.Texture2D, texture);
-        if (buffer != 0) GL.BindBuffer(BufferTarget.PixelUnpackBuffer, buffer);
-        GL.PixelStore(PixelStoreParameter.UnpackAlignment, alignment);
-        GL.PixelStore(PixelStoreParameter.UnpackRowLength, rowLength);
-        GL.PixelStore(PixelStoreParameter.UnpackSkipPixels, skipPixels);
-        GL.PixelStore(PixelStoreParameter.UnpackSkipRows, skipRows);
-        GL.PixelStore(PixelStoreParameter.UnpackImageHeight, imageHeight);
-        GL.PixelStore(PixelStoreParameter.UnpackSkipImages, skipImages);
     }
 }

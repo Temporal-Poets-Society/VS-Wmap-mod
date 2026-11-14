@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using Wmap.Core;
@@ -29,7 +30,14 @@ public sealed class CylinderSurface
     readonly int earthIceCap;
 
     static int Number(object p, string name) => Convert.ToInt32(WorldSource.Member(p, name));
-    static T Bind<T>(object p, string name) where T : Delegate => (T)p.GetType().GetMethod(name).CreateDelegate(typeof(T), p);
+    // Cylinder World's methods are found by name and parameter types (0.5.3: by name alone, GetMethod threw
+    // AmbiguousMatchException the day one of them gained an overload; Cylinder World review 14 Nov 2026, CW-0012).
+    static MethodInfo Find(object p, string name, params Type[] types) =>
+        p.GetType().GetMethod(name, BindingFlags.Public | BindingFlags.Instance, null, types, null);
+    static MethodInfo Need(object p, string name, params Type[] types) => Find(p, name, types)
+        ?? throw new MissingMethodException($"Cylinder World has no {name}({string.Join(", ", types.Select(t => t.Name))}) on {p.GetType().FullName}; this World Map needs it");
+    static T Bind<T>(object p, string name) where T : Delegate =>
+        (T)Need(p, name, typeof(T).GetMethod("Invoke").GetParameters().Select(a => a.ParameterType).ToArray()).CreateDelegate(typeof(T), p);
     /// <param name="flattenSeam">Cylinder World's FlattenSeabed setting: without it the seam band keeps the generated terrain.</param>
     public CylinderSurface(object parameters, int worldHeight, int seaLevel, bool flattenSeam = true)
     {
@@ -45,7 +53,7 @@ public sealed class CylinderSurface
         curtainHalfWidth = Convert.ToInt32(p.GetType().GetField("CurtainHalfWidth")?.GetRawConstantValue() ?? 2);
         inSeam = Bind<Func<double, bool>>(p, "InSeamBand");
         seamBlend = Bind<Func<double, double>>(p, "SeamBlendWeight");
-        if (p.GetType().GetMethod("SeamGround", new[] { typeof(double), typeof(double), typeof(int) }) != null && p.GetType().GetProperty("SeamWorkReach") != null)
+        if (Find(p, "SeamGround", typeof(double), typeof(double), typeof(int)) != null && p.GetType().GetProperty("SeamWorkReach") != null)
         {
             seamGround = Bind<Func<double, double, int, int>>(p, "SeamGround");
             seamFloor = Bind<Func<double, double, int>>(p, "SeamFloorY");
@@ -57,7 +65,7 @@ public sealed class CylinderSurface
         polarOwns = Bind<Func<double, double, bool>>(p, "PolarOwnsSeabed");
         planeCap = Bind<Func<double, double, int>>(p, "PlaneCap");
         wallBlock = Bind<Func<double, int, double, bool>>(p, "IsWallBlock");
-        var method = p.GetType().GetMethod("GetPolarColumn");
+        var method = Need(p, "GetPolarColumn", typeof(double), typeof(double));
         var x = Expression.Parameter(typeof(double)); var z = Expression.Parameter(typeof(double));
         var col = Expression.Variable(method.ReturnType);
         var body = Expression.Block(new[] { col }, Expression.Assign(col, Expression.Call(Expression.Constant(p), method, x, z)),
@@ -71,19 +79,19 @@ public sealed class CylinderSurface
             earthLatitude = Bind<Func<double, double>>(earth, "Latitude");
             lifelessBorder = Convert.ToInt32(earth.GetType().GetField("LifelessBorder").GetRawConstantValue());
             earthIceCap = worldHeight - 5;
-            var sample = earth.GetType().GetMethod("Sample");
+            var sample = Need(earth, "Sample", typeof(double), typeof(double));
             var earthColumn = Expression.Variable(sample.ReturnType);
             var floor = typeof(Math).GetMethod(nameof(Math.Floor), new[] { typeof(double) });
             var wx = Expression.Add(Expression.Call(floor, x), Expression.Constant(.5));
             var wz = Expression.Add(Expression.Call(floor, z), Expression.Constant(.5));
-            var rises = p.GetType().GetMethod("EarthIceRise");
-            var freeze = Expression.Call(Expression.Constant(p), p.GetType().GetMethod("HasArcticIce"), wx, wz, earthColumn);
+            var rises = Find(p, "EarthIceRise", typeof(double), typeof(double), sample.ReturnType);
+            var freeze = Expression.Call(Expression.Constant(p), Need(p, "HasArcticIce", typeof(double), typeof(double), sample.ReturnType), wx, wz, earthColumn);
             Expression rise = rises == null ? Expression.Constant(0) : Expression.Call(Expression.Constant(p), rises, wx, wz, earthColumn);
             earthIceRise = Expression.Lambda<Func<double, double, int>>(Expression.Block(new[] { earthColumn },
                 // Cylinder 0.10.1 matches Earth's integer terrain samples at coastlines.
                 Expression.Assign(earthColumn, Expression.Call(Expression.Constant(earth), sample, Expression.Call(floor, x), Expression.Call(floor, z))),
                 Expression.Condition(freeze, rise, Expression.Constant(-1))), x, z).Compile();
-            if (p.GetType().GetMethod("EarthSnowEighths") != null) earthSnow = Bind<Func<double, double, int>>(p, "EarthSnowEighths");
+            if (Find(p, "EarthSnowEighths", typeof(double), typeof(double)) != null) earthSnow = Bind<Func<double, double, int>>(p, "EarthSnowEighths");
         }
     }
     /// <summary>Applies the finishing passes to a terrain sampler. Cylinder's functions are pure; the result is as thread-safe as terrain.</summary>

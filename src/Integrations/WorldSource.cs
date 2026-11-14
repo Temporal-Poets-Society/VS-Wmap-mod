@@ -20,19 +20,31 @@ public sealed class WorldSource
 {
     public AtlasInfo Info;
     /// <summary>Creates a terrain sampler for one worker thread, or null without a prediction provider.</summary>
-    public global::System.Func<global::System.Func<double, double, MapSample>> Samplers;
+    public System.Func<System.Func<double, double, MapSample>> Samplers;
     /// <summary>A sampler for single-threaded callers.</summary>
-    public global::System.Func<double, double, MapSample> Sample;
+    public System.Func<double, double, MapSample> Sample;
     /// <summary>Forest cover and the climate the game tints by, from Earth Map; null without it. Thread-safe.</summary>
-    public global::System.Func<double, double, BiomeSample> Biome;
+    public System.Func<double, double, BiomeSample> Biome;
     /// <summary><see cref="Biome"/> on Earth's built-in heights, for maps of the whole world (the climate raster); null where
     /// Earth has no such switch (<see cref="EarthHeights"/>). Thread-safe.</summary>
-    public global::System.Func<double, double, BiomeSample> WorldBiome;
+    public System.Func<double, double, BiomeSample> WorldBiome;
+    /// <summary>How the game colours grass through the year at a place (0.5.3-rc.5), from Earth Map's <c>GrassSeasonAt</c>;
+    /// null without it (biome tiles then carry <see cref="SeasonSample.None"/>). Thread-safe.</summary>
+    public System.Func<double, double, SeasonSample> Season;
     /// <summary>River centrelines from Earth Map, or null.</summary>
     public IReadOnlyList<RiverSegment> Rivers;
     public static object Member(object o, string name) => o == null ? null : o.GetType().GetField(name)?.GetValue(o) ?? o.GetType().GetProperty(name)?.GetValue(o);
     static object Private(object o, string name) => o?.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)?.GetValue(o);
-    static double Num(object o, string n) => Convert.ToDouble(Member(o, n), CultureInfo.InvariantCulture);
+    /// <summary>A number another mod's object must have (WM-D04): its field or property, or an exception naming it, the
+    /// object's type and the mod (0.5.3, WM-0033: a renamed member used to read 0 and bend the atlas's geometry without a
+    /// word).</summary>
+    static double Need(object o, string n, string provider)
+    {
+        object v = Member(o, n);
+        if (v == null) throw new MissingMemberException($"{provider} has no {n} on {o?.GetType().FullName ?? "a missing object"}; this World Map needs it");
+        return Convert.ToDouble(v, CultureInfo.InvariantCulture);
+    }
+    static string ModName(ICoreAPI api, string id, string name) => name + " " + (api.ModLoader.GetMod(id)?.Info.Version ?? "?");
     static bool Bool(object o, string n) => Member(o, n) is true;
     static object FindSystem(ICoreAPI api, string name) => api.ModLoader.Systems.FirstOrDefault(s => s.GetType().FullName == name);
 
@@ -42,14 +54,12 @@ public sealed class WorldSource
         var info = new AtlasInfo { Session = Guid.NewGuid().ToString("N"), Width = wm.MapSizeX, Height = wm.MapSizeZ, SeaLevel = api.World.SeaLevel, MapHeight = wm.MapSizeY, Source = "Observed terrain only" };
         info.HeightRange = Semantic.HeightRangeFor(info.MapHeight, info.SeaLevel);
         object cylinderCore = FindSystem(api, "CylinderWorld.CylinderWorldCore"), cylinder = Member(cylinderCore, "Params");
-        // Cylinder World flattens the seam band only with FlattenSeabed (default on); its saved layout does not say.
-        bool flattenSeam = Member(Member(cylinderCore, "Config"), "FlattenSeabed") is not false;
-        if (cylinder != null)
-        {
-            info.StartX = Num(cylinder, "JumpInset"); info.Width = Num(cylinder, "Circumference"); info.Wraps = true;
-            info.EquatorZ = Num(cylinder, "EquatorZ"); info.PoleDistance = Num(cylinder, "PoleDistance");
-            info.HasGeography = info.PoleDistance > 0 && Bool(cylinder, "IsPlanetLayout");
-        }
+        // Cylinder World flattens the seam band only with FlattenSeabed (default on). From Cylinder World 1.1.0 a world saves it
+        // (SeamParams.FlattenSeabed where FlattenSeabedFrozen is set, CW-0011, WM-0043); older worlds follow the config.
+        bool flattenSeam = Member(cylinder, "FlattenSeabedFrozen") is true
+            ? Member(cylinder, "FlattenSeabed") is not false
+            : Member(Member(cylinderCore, "Config"), "FlattenSeabed") is not false;
+        if (cylinder != null) CylinderGeometry(api, cylinder, info);
         var source = new WorldSource { Info = info };
         object earth = FindSystem(api, "EarthMap.EarthMapSystem"), p = Member(earth, "Params"), model = Member(earth, "Model");
         // Terra Prety replaces vanilla's ocean and landform map factories with its own continents and
@@ -59,45 +69,10 @@ public sealed class WorldSource
         if (!config.PredictTerrain) info.Source = "Observed terrain only (PredictTerrain off)";
         if (model != null && Bool(p, "Enabled"))
         {
-            object g = Member(model, "Geometry");
-            info.StartX = Num(g, "RingStart"); info.Width = Num(g, "RingLength");
-            // Active topology takes priority over the saved generator's Wraps if Cylinder World was removed.
-            info.Wraps = cylinder != null && Bool(g, "Wraps");
-            info.EquatorZ = Num(g, "EquatorZ"); info.PoleDistance = Num(g, "BlocksPerDegreeZ") * 90;
-            info.HasGeography = true; info.GeographyProvider = AtlasInfo.EarthGeography;
-            if (config.PredictTerrain)
-            {
-                // TerrainModel is a read-only worldgen sampler after setup. Capture a shallow model snapshot
-                // and clone its mutable zone list, avoiding later list replacement/mutation on the live model.
-                var clone = typeof(object).GetMethod("MemberwiseClone", BindingFlags.NonPublic | BindingFlags.Instance);
-                object snapshot = clone.Invoke(model, null);
-                var zones = model.GetType().GetField("FlatZones");
-                if (zones?.GetValue(model) is System.Collections.IList list)
-                {
-                    var copied = (System.Collections.IList)Activator.CreateInstance(list.GetType());
-                    foreach (object zone in list) copied.Add(clone.Invoke(zone, null));
-                    zones.SetValue(snapshot, copied);
-                }
-                // Earth's own map export samples this model from parallel workers; one delegate serves all threads.
-                var earthSample = EarthSampler(snapshot);
-                source.Samplers = () => earthSample;
-                info.Source = "Earth terrain prediction";
-                try { source.Biome = EarthBiome(snapshot, api.WorldManager.SaveGame.WorldConfiguration, out string settings); info.BiomeId = BiomeTile.Identity(settings); }
-                catch (Exception e) { api.Logger.Warning("[wmap] Earth forest and climate unavailable; far terrain keeps the atlas colours: {0}", e.Message); }
-                source.WorldBiome = EarthHeights.OnBuiltInHeights(model.GetType().Assembly, source.Biome);
-                try { source.Rivers = EarthRivers(Member(model, "Rivers")); }
-                catch (Exception e) { api.Logger.Warning("[wmap] Earth river courses unavailable; rivers are drawn from sampled water only: {0}", e.Message); }
-            }
+            string em = EarthGeometry(api, model, cylinder != null, info);
+            if (config.PredictTerrain) EarthPrediction(api, model, em, source);
         }
-        else if (config.PredictTerrain && cylinder != null && CylinderSampler(api, cylinder) != null)
-        {
-            source.Samplers = () => CylinderSampler(api, cylinder);
-            // A land/sea mask at ocean-map resolution with two invented heights: no relief to draw in 3D.
-            info.FlatPrediction = true;
-            info.Source = terraPrety != null ? "Approximate continents from Terra Prety's ocean map" : "Approximate cylinder continents";
-            if (terraPrety != null)
-                api.Logger.Warning("[wmap] Terra Prety shapes this world's terrain. Wmap predicts only its land/sea mask, without heights, and its coasts are approximate; recorded terrain draws over the prediction. Set PredictTerrain to false to chart recorded terrain only.");
-        }
+        else if (config.PredictTerrain && cylinder != null && CylinderSampler(api, cylinder) != null) CylinderPrediction(api, cylinder, terraPrety, source);
         if (cylinder != null && source.Samplers != null)
         {
             var surface = new CylinderSurface(cylinder, wm.MapSizeY, info.SeaLevel, flattenSeam);
@@ -111,26 +86,114 @@ public sealed class WorldSource
         info.Biome = source.Biome != null && info.BiomeId != null;
         if (info.Width <= 0 || info.Height <= 0) throw new InvalidOperationException("Invalid saved world geometry");
         info.ObservationId = TileCodec.Hash(FormattableString.Invariant($"wmap-observed-v1|{wm.SaveGame.SavegameIdentifier}|surface|{info.StartX}|{info.Width}|{info.Height}"));
+        info.CacheId = CacheId(api, config, info, p, model, cylinder, flattenSeam, terraPrety);
+        return source;
+    }
+
+    /// <summary>Cylinder World's ring: where it starts, its circumference, its equator and poles (WM-D04).</summary>
+    static void CylinderGeometry(ICoreServerAPI api, object cylinder, AtlasInfo info)
+    {
+        string cw = ModName(api, "cylinderworld", "Cylinder World");
+        info.StartX = Need(cylinder, "JumpInset", cw); info.Width = Need(cylinder, "Circumference", cw); info.Wraps = true;
+        info.EquatorZ = Need(cylinder, "EquatorZ", cw); info.PoleDistance = Need(cylinder, "PoleDistance", cw);
+        info.HasGeography = info.PoleDistance > 0 && Bool(cylinder, "IsPlanetLayout");
+    }
+
+    /// <summary>Earth's ring and geography; returns Earth's name and version for messages.</summary>
+    static string EarthGeometry(ICoreServerAPI api, object model, bool cylinder, AtlasInfo info)
+    {
+        object g = Member(model, "Geometry");
+        string em = ModName(api, "earth", "Earth");
+        info.StartX = Need(g, "RingStart", em); info.Width = Need(g, "RingLength", em);
+        // Active topology takes priority over the saved generator's Wraps if Cylinder World was removed.
+        info.Wraps = cylinder && Bool(g, "Wraps");
+        info.EquatorZ = Need(g, "EquatorZ", em); info.PoleDistance = Need(g, "BlocksPerDegreeZ", em) * 90;
+        info.HasGeography = true; info.GeographyProvider = AtlasInfo.EarthGeography;
+        return em;
+    }
+
+    /// <summary>Earth's terrain prediction, forest and climate, grass seasons and river courses, read from a snapshot of its
+    /// model; observed terrain only where its terrain cannot be read (WM-0033).</summary>
+    static void EarthPrediction(ICoreServerAPI api, object model, string em, WorldSource source)
+    {
+        var info = source.Info;
+        try
+        {
+            // TerrainModel is a read-only worldgen sampler after setup. Capture a shallow model snapshot
+            // and clone its mutable zone list, avoiding later list replacement/mutation on the live model.
+            var clone = typeof(object).GetMethod("MemberwiseClone", BindingFlags.NonPublic | BindingFlags.Instance);
+            object snapshot = clone.Invoke(model, null);
+            var zones = model.GetType().GetField("FlatZones");
+            if (zones?.GetValue(model) is System.Collections.IList list)
+            {
+                var copied = (System.Collections.IList)Activator.CreateInstance(list.GetType());
+                foreach (object zone in list) copied.Add(clone.Invoke(zone, null));
+                zones.SetValue(snapshot, copied);
+            }
+            // Earth's own map export samples this model from parallel workers; one delegate serves all threads.
+            var earthSample = EarthSampler(snapshot);
+            source.Samplers = () => earthSample;
+            info.Source = "Earth terrain prediction";
+            try
+            {
+                source.Biome = EarthBiome(snapshot, api.WorldManager.SaveGame.WorldConfiguration, out string settings);
+                source.Season = EarthSeason(snapshot);
+                // Tiles made before Earth had the grass seasons are made again with them.
+                info.BiomeId = BiomeTile.Identity(settings + (source.Season != null ? "|grass1" : ""));
+            }
+            catch (Exception e) { api.Logger.Warning("[wmap] Earth forest and climate unavailable; far terrain keeps the atlas colours: {0}", e.Message); }
+            source.WorldBiome = EarthHeights.OnBuiltInHeights(model.GetType().Assembly, source.Biome);
+            try { source.Rivers = EarthRivers(Member(model, "Rivers")); }
+            catch (Exception e) { api.Logger.Warning("[wmap] Earth river courses unavailable; rivers are drawn from sampled water only: {0}", e.Message); }
+        }
+        catch (Exception e) when (e is MissingMemberException or MissingMethodException or ArgumentException or InvalidCastException)
+        {
+            // Earth's terrain could not be read (0.5.3, WM-0033): the atlas charts recorded terrain only, rather than not
+            // starting at all; the geometry above stands.
+            api.Logger.Error("[wmap] {0}'s terrain could not be read ({1}); the atlas charts recorded terrain only. A World Map made for this Earth fixes it.", em, e.Message);
+            source.Samplers = null; source.Biome = null; source.Season = null; source.WorldBiome = null; source.Rivers = null;
+            info.Source = "Observed terrain only (Earth's terrain unreadable)";
+        }
+    }
+
+    /// <summary>The cylinder's continents from its ocean map: a land/sea mask without relief.</summary>
+    static void CylinderPrediction(ICoreServerAPI api, object cylinder, object terraPrety, WorldSource source)
+    {
+        var info = source.Info;
+        source.Samplers = () => CylinderSampler(api, cylinder);
+        // A land/sea mask at ocean-map resolution with two invented heights: no relief to draw in 3D.
+        info.FlatPrediction = true;
+        info.Source = terraPrety != null ? "Approximate continents from Terra Prety's ocean map" : "Approximate cylinder continents";
+        if (terraPrety != null)
+            api.Logger.Warning("[wmap] Terra Prety shapes this world's terrain. Wmap predicts only its land/sea mask, without heights, and its coasts are approximate; recorded terrain draws over the prediction. Set PredictTerrain to false to chart recorded terrain only.");
+    }
+
+    /// <summary>What the atlas's stored tiles depend on: the save, the seed, the mods and their builds, and what shapes the
+    /// terrain.</summary>
+    static string CacheId(ICoreServerAPI api, WmapConfig config, AtlasInfo info, object p, object model, object cylinder, bool flattenSeam, object terraPrety)
+    {
+        var wm = api.WorldManager;
         string mods = string.Join(";", api.ModLoader.Mods.Select(m => m.Info.ModID + "@" + m.Info.Version).OrderBy(s => s));
         // Development builds can change terrain functions without changing modinfo's
         // version. Assembly revisions must invalidate derived predictions as well.
         string providers = typeof(WorldSource).Module.ModuleVersionId + "|" + model?.GetType().Module.ModuleVersionId + "|" + cylinder?.GetType().Module.ModuleVersionId;
         // Only what shapes terrain: runtime state such as Cylinder's sea-ice date must not move the cache on restart.
         string terrain = JsonConvert.SerializeObject(p) + "|" + SavedLayout(cylinder) + "|flatten=" + flattenSeam + "|" + ForeignConfig(api, terraPrety);
-        info.CacheId = TileCodec.Hash("wmap-tiles-v4|" + config.CacheRevision + "|" + wm.SaveGame.SavegameIdentifier + "|" + wm.Seed + "|" + mods + "|" + providers + "|" + terrain + "|" + info.Width + "|" + info.Height
+        return TileCodec.Hash("wmap-tiles-v4|" + config.CacheRevision + "|" + wm.SaveGame.SavegameIdentifier + "|" + wm.Seed + "|" + mods + "|" + providers + "|" + terrain + "|" + info.Width + "|" + info.Height
             // 0.5.0-pre.11: a taller world's heights span more than 256 blocks; its tiles before that were cut at 256.
             + (info.HeightRange != Semantic.DefaultHeightRange ? "|heights=" + info.HeightRange.ToString(CultureInfo.InvariantCulture) : ""));
-        return source;
     }
 
     /// <summary>Cylinder World's saved layout: its protobuf fields, without runtime state (the sea-ice date,
-    /// the Earth polar model) or the mist and jump-fog settings, which change no terrain.</summary>
+    /// the Earth polar model) or the settings that change no terrain: mist, jump fog and the wall build margin (0.5.3:
+    /// a changed margin made the whole chart again; Cylinder World review 14 Nov 2026).</summary>
     public static string SavedLayout(object cylinder)
     {
         if (cylinder == null) return "";
         var saved = new SortedDictionary<string, object>(StringComparer.Ordinal);
         foreach (var f in cylinder.GetType().GetFields(BindingFlags.Instance | BindingFlags.Public))
-            if (f.GetCustomAttributes(false).Any(a => a.GetType().Name == "ProtoMemberAttribute") && !f.Name.StartsWith("Mist", StringComparison.Ordinal) && !f.Name.StartsWith("JumpFog", StringComparison.Ordinal))
+            if (f.GetCustomAttributes(false).Any(a => a.GetType().Name == "ProtoMemberAttribute") && !f.Name.StartsWith("Mist", StringComparison.Ordinal) && !f.Name.StartsWith("JumpFog", StringComparison.Ordinal)
+                && f.Name != "WallBuildMargin")
                 saved[f.Name] = f.GetValue(cylinder);
         return JsonConvert.SerializeObject(saved);
     }
@@ -143,9 +206,21 @@ public sealed class WorldSource
         catch (Exception e) { api.Logger.Warning("[wmap] Could not read Terra Prety's settings for the chart cache: {0}", e.Message); return "unreadable"; }
     }
 
-    public static global::System.Func<double, double, MapSample> EarthSampler(object model)
+    /// <summary>The column method Wmap samples Earth's model with: <c>GetSurfaceColumn(double, double)</c> when Earth has it
+    /// and it returns the same type as <c>GetColumn</c> (the surface as generated, craters included), else
+    /// <c>GetColumn(double, double)</c>; null without either.</summary>
+    public static MethodInfo SurfaceColumnMethod(Type model)
     {
-        var method = model.GetType().GetMethod("GetColumn", new[] { typeof(double), typeof(double) }) ?? throw new MissingMethodException("Earth TerrainModel.GetColumn");
+        var column = model.GetMethod("GetColumn", new[] { typeof(double), typeof(double) });
+        var surface = model.GetMethod("GetSurfaceColumn", new[] { typeof(double), typeof(double) });
+        return surface != null && (column == null || surface.ReturnType == column.ReturnType) ? surface : column;
+    }
+
+    public static System.Func<double, double, MapSample> EarthSampler(object model)
+    {
+        // The surface as generated where Earth offers it (EA-0071: GetColumn with what later generation passes carve, such as
+        // the volcano craters, WM-0023), else the terrain column; both return the same column type.
+        var method = SurfaceColumnMethod(model.GetType()) ?? throw new MissingMethodException("Earth TerrainModel.GetColumn");
         ParameterExpression x = Expression.Parameter(typeof(double)), z = Expression.Parameter(typeof(double));
         var column = Expression.Variable(method.ReturnType);
         Expression field(string n) => Expression.Field(column, n);
@@ -158,7 +233,7 @@ public sealed class WorldSource
                 field("Top"), field("WaterTop"), field("Water"), field("IceBottom"), river,
                 method.ReturnType.GetField("Beach") != null ? field("Beach") : Expression.Constant(false), x, z);
         var body = Expression.Block(new[] { column }, Expression.Assign(column, Expression.Call(Expression.Constant(model), method, x, z)), result);
-        return Expression.Lambda<global::System.Func<double, double, MapSample>>(body, x, z).Compile();
+        return Expression.Lambda<System.Func<double, double, MapSample>>(body, x, z).Compile();
     }
 
     // Earth pre.8 applies these surfaces after GetColumn (EarthWorldGen.GenerateTerrain / Surface). Keep the
@@ -166,13 +241,13 @@ public sealed class WorldSource
     sealed class EarthSurface
     {
         delegate void Climate(double lat, double lon, out double temperature, out double rain, out double height);
-        readonly global::System.Func<double, double, GeoPosition> position;
-        readonly global::System.Func<double, double, double> glaciers;
+        readonly System.Func<double, double, GeoPosition> position;
+        readonly System.Func<double, double, double> glaciers;
         readonly Climate climate;
         readonly int sea, height;
         readonly System.Threading.ThreadLocal<Dictionary<(int, int), bool>> frozen = new(() => new());
 
-        EarthSurface(global::System.Func<double, double, GeoPosition> position, global::System.Func<double, double, double> glaciers,
+        EarthSurface(System.Func<double, double, GeoPosition> position, System.Func<double, double, double> glaciers,
             Climate climate, int sea, int height)
         { this.position = position; this.glaciers = glaciers; this.climate = climate; this.sea = sea; this.height = height; }
 
@@ -185,15 +260,15 @@ public sealed class WorldSource
             var body = Expression.Block(new[] { g }, Expression.Assign(g, Expression.Call(Expression.Constant(model), geo, x, z)),
                 Expression.New(typeof(GeoPosition).GetConstructors()[0], Expression.Field(g, "Lat"), Expression.Field(g, "Lon"),
                     Expression.Field(g, "InGutter"), Expression.Field(g, "BeyondPole")));
-            var position = Expression.Lambda<global::System.Func<double, double, GeoPosition>>(body, x, z).Compile();
+            var position = Expression.Lambda<System.Func<double, double, GeoPosition>>(body, x, z).Compile();
             var data = Member(model, "Data");
             var coverage = data?.GetType().GetMethod("GlacierCoverage", new[] { typeof(double), typeof(double) });
             var glaciers = Bool(data, "HasGlaciers") && coverage != null
-                ? (global::System.Func<double, double, double>)coverage.CreateDelegate(typeof(global::System.Func<double, double, double>), data) : null;
+                ? (System.Func<double, double, double>)coverage.CreateDelegate(typeof(System.Func<double, double, double>), data) : null;
             var method = model.GetType().GetMethod("ClimateAt");
             var climate = method == null ? null : (Climate)method.CreateDelegate(typeof(Climate), model);
             var vertical = Member(model, "Vertical");
-            return new(position, glaciers, climate, (int)Num(vertical, "SeaLevel"), (int)Num(vertical, "MapHeight"));
+            return new(position, glaciers, climate, (int)Need(vertical, "SeaLevel", "Earth"), (int)Need(vertical, "MapHeight", "Earth"));
         }
 
         bool Frozen(double x, double z)
@@ -223,7 +298,7 @@ public sealed class WorldSource
     /// (<c>ClimatePixel</c>: the stored temperature and rain that vanilla's altitude adjustment turns into the
     /// surface values the game tints plants and water by), with the world's temperature and rain settings as
     /// Earth's worldgen reads them.</summary>
-    public static global::System.Func<double, double, BiomeSample> EarthBiome(object model, ITreeAttribute worldConfig, out string settings)
+    public static System.Func<double, double, BiomeSample> EarthBiome(object model, ITreeAttribute worldConfig, out string settings)
     {
         var forest = model.GetType().GetMethod("ForestPotential", new[] { typeof(double), typeof(double) }) ?? throw new MissingMethodException("Earth TerrainModel.ForestPotential");
         // The far tint applies vanilla's lapse to the stored temperature itself. Earth worlds with real cooling by height
@@ -233,8 +308,8 @@ public sealed class WorldSource
         var climate = model.GetType().GetMethod("ClimatePixelForVanillaLapse", parameters);
         bool vanillaLapse = climate?.ReturnType == typeof(int);
         if (!vanillaLapse) climate = model.GetType().GetMethod("ClimatePixel", parameters) ?? throw new MissingMethodException("Earth TerrainModel.ClimatePixel");
-        var forestAt = (global::System.Func<double, double, double>)forest.CreateDelegate(typeof(global::System.Func<double, double, double>), model);
-        var climateAt = (global::System.Func<double, double, int, float, float, int>)climate.CreateDelegate(typeof(global::System.Func<double, double, int, float, float, int>), model);
+        var forestAt = (System.Func<double, double, double>)forest.CreateDelegate(typeof(System.Func<double, double, double>), model);
+        var climateAt = (System.Func<double, double, int, float, float, int>)climate.CreateDelegate(typeof(System.Func<double, double, int, float, float, int>), model);
         float Read(string name) => float.TryParse(worldConfig?.GetString(name, "1"), NumberStyles.Float, CultureInfo.InvariantCulture, out var f) ? f : 1;
         float tempMul = Read("globalTemperature"), rainMul = Read("globalPrecipitation");
         // A different identity rebuilds biome tiles and climate rasters cached from the sea-level byte of a v2 world.
@@ -245,6 +320,23 @@ public sealed class WorldSource
             return new((byte)Math.Clamp((int)Math.Round(forestAt(x, z) * 255), 0, 255), (byte)(pixel >> 16 & 255), (byte)(pixel >> 8 & 255));
         };
     }
+
+    /// <summary>Earth's <c>TerrainModel.GrassSeasonAt(x, z, curve)</c> (Earth decision 0079, EA-0071): the place's grass season
+    /// map and its wetness curve, as Earth's client colours grass; null with an Earth before it.</summary>
+    public static System.Func<double, double, SeasonSample> EarthSeason(object model)
+    {
+        var method = model.GetType().GetMethod("GrassSeasonAt", new[] { typeof(double), typeof(double), typeof(float[]) });
+        if (method == null || method.ReturnType != typeof(int)) return null;
+        var at = (System.Func<double, double, float[], int>)method.CreateDelegate(typeof(System.Func<double, double, float[], int>), model);
+        return (x, z) =>
+        {
+            // Earth's GrassSeason.Steps (24), one buffer per worker thread
+            var c = seasonCurve ??= new float[24];
+            int map = at(x, z, c);
+            return SeasonSample.FromEarth(map, map >= 0 ? c : null);
+        };
+    }
+    [System.ThreadStatic] static float[] seasonCurve;
 
     public static MapSample ColumnSample(int top, int waterTop, byte water, int iceBottom, bool river) =>
         new(top, water != 0 ? Math.Max(0, waterTop - top) : 0,
@@ -263,7 +355,7 @@ public sealed class WorldSource
         var typed = Expression.Unbox(item, type);
         Expression Read(string n) => Expression.Convert(Expression.Field(typed, F(n)), typeof(double));
         var tuple = typeof(ValueTuple<double, double, double, double, double>);
-        var read = Expression.Lambda<global::System.Func<object, (double, double, double, double, double)>>(
+        var read = Expression.Lambda<System.Func<object, (double, double, double, double, double)>>(
             Expression.New(tuple.GetConstructor(new[] { typeof(double), typeof(double), typeof(double), typeof(double), typeof(double) }),
                 Read("X1"), Read("Z1"), Read("X2"), Read("Z2"), Read("Q")), item).Compile();
         var widths = new Dictionary<double, double>();
@@ -277,7 +369,9 @@ public sealed class WorldSource
         return result;
     }
 
-    static global::System.Func<double, double, MapSample> CylinderSampler(ICoreServerAPI api, object cylinder)
+    static bool oceanForceMissing;
+
+    static System.Func<double, double, MapSample> CylinderSampler(ICoreServerAPI api, object cylinder)
     {
         var gen = api.ModLoader.GetModSystem<GenMaps>();
         if (gen?.requireLandAt == null || gen.requireLandAt.Count == 0 || gen.noiseSizeOcean <= 0) return null;
@@ -285,7 +379,15 @@ public sealed class WorldSource
         float read(string name) => float.TryParse(save.WorldConfiguration.GetString(name, "1"), NumberStyles.Float, CultureInfo.InvariantCulture, out var f) ? f : 1;
         var ocean = GenMaps.GetOceanMapGen(api.WorldManager.Seed + 1873, read("landcover"), TerraGenConfig.oceanMapScale, read("oceanscale"), new List<XZ>(gen.requireLandAt), GameVersion.IsLowerVersionThan(save.CreatedGameVersion, "1.20.0-pre.14"));
         int pixelBlocks = Math.Max(1, api.WorldManager.RegionSize / gen.noiseSizeOcean);
-        var force = (global::System.Func<double, double, int>)cylinder.GetType().GetMethod("OceanForce").CreateDelegate(typeof(global::System.Func<double, double, int>), cylinder);
+        // Cylinder World's ocean rule (0.5.3, WM-0033: a missing one threw and the atlas did not start): without it, no prediction.
+        var forceMethod = cylinder.GetType().GetMethod("OceanForce", new[] { typeof(double), typeof(double) });
+        if (forceMethod == null || forceMethod.ReturnType != typeof(int))
+        {
+            if (!oceanForceMissing) api.Logger.Error("[wmap] {0} has no OceanForce(double, double); the atlas charts recorded terrain only.", ModName(api, "cylinderworld", "Cylinder World"));
+            oceanForceMissing = true;
+            return null;
+        }
+        var force = (System.Func<double, double, int>)forceMethod.CreateDelegate(typeof(System.Func<double, double, int>), cylinder);
         int sea = api.World.SeaLevel;
         // A bounded set of small generator patches avoids allocating a row as wide as the planet.
         // The generator and patch cache belong to one worker thread.
@@ -303,7 +405,7 @@ public sealed class WorldSource
         };
     }
 
-    public static global::System.Func<double, double, GeoPosition> Geography(ICoreAPI api, AtlasInfo info)
+    public static System.Func<double, double, GeoPosition> Geography(ICoreAPI api, AtlasInfo info)
     {
         object earth = FindSystem(api, "EarthMap.EarthMapSystem"), model = Member(earth, "Model"), g = Member(model, "Geometry");
         if (g != null && Bool(Member(earth, "Params"), "Enabled"))
@@ -313,7 +415,7 @@ public sealed class WorldSource
             var body = Expression.Block(new[] { result }, Expression.Assign(result, Expression.Call(Expression.Constant(g), method, x, z)),
                 Expression.New(typeof(GeoPosition).GetConstructor(new[] { typeof(double), typeof(double), typeof(bool), typeof(bool) }),
                     Expression.Field(result, "Lat"), Expression.Field(result, "Lon"), Expression.Field(result, "InGutter"), Expression.Field(result, "BeyondPole")));
-            return Expression.Lambda<global::System.Func<double, double, GeoPosition>>(body, x, z).Compile();
+            return Expression.Lambda<System.Func<double, double, GeoPosition>>(body, x, z).Compile();
         }
         // Wait for Earth's synchronized client model rather than permanently using a wrong linear datum.
         // Also with PredictTerrain off, whose Source does not name Earth.

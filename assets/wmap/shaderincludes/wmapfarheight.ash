@@ -25,7 +25,7 @@ float wmapPushAt(float dist, float h, float wet)
 // edge, the terraces toward their outer one. A cut then always lies below the other surface. Before, both were cut at the
 // edge, and where the smooth mesh began higher than the last terrace (a coast, a slope), nothing closed the step and
 // single pixels of sky showed through along the ring. At the edge itself neither is lowered. JoinOverlap is
-// FarFrame.JoinOverlap. terraces: 1 for the terraces, 0 for the smooth mesh.
+// TerracePatch.JoinOverlap (the core tests check it). terraces: 1 for the terraces, 0 for the smooth mesh.
 const float JoinOverlap = 16.0;
 float wmapJoinPush(float dist, float terraces)
 {
@@ -36,47 +36,70 @@ float wmapJoinPush(float dist, float terraces)
 
 // The ground at a point (chart, near band and the four-block recordings): coast distance in blocks (land positive), height
 // above the sea surface, ice; and the band's weight and biome for the forest.
-vec3 wmapGroundAt(vec2 local, float lod, out float bandWeight, out vec4 bandBiome)
+// From the four-block recording's texel there (wmapRecordedTexel, level 0) and the band's fade (wmapRecordedFade).
+vec3 wmapGroundFrom(vec2 local, float lod, vec3 recTexel, float recFade, out float bandWeight, out vec4 bandBiome)
 {
     vec4 chart = textureLod(wmapChart, wmapChartUV.xy + local * wmapChartUV.zw, lod);
     vec4 band;
     bandWeight = wmapBandAt(local, band, bandBiome);
     float recorded;
     vec4 color;
-    return wmapWithRecorded(local, wmapSurface(chart, band, bandWeight), bandWeight, recorded, color);
+    return wmapWithRecordedFrom(recTexel, recFade, wmapSurface(chart, band, bandWeight), recorded, color);
+}
+vec3 wmapGroundAt(vec2 local, float lod, out float bandWeight, out vec4 bandBiome)
+{
+    return wmapGroundFrom(local, lod, wmapRecordedTexel(local, 0), wmapRecordedFade(local), bandWeight, bandBiome);
 }
 
-// Forest canopy over the ground at a point, in blocks: on land away from the coast and off the ice.
-float wmapCanopy(vec2 local, vec3 surface, float h, float bandWeight, vec4 bandBiome)
+// Forest canopy over the ground at a point, in blocks: on land away from the coast and off the ice. Predicted, a full forest
+// stands wmapBandRange.z blocks over the land (the recorded forest's middle treetop height around the camera, else 8;
+// 0.5.3-rc.8); where the recorder saw the treetops (0.5.3-rc.4), their mean height over the texels around, so a discovered
+// forest stands at its own height, with its clearings.
+// recorded: the recorded canopy there (wmapRecordedCanopy).
+float wmapCanopyWith(vec2 local, vec3 surface, float h, float bandWeight, vec4 bandBiome, vec2 recorded)
 {
     vec4 biome = wmapBiomeAt(local, bandWeight, bandBiome);
     float land = smoothstep(2.0, 10.0, surface.x) * (1.0 - surface.z) * smoothstep(0.5, 1.5, h);
-    return wmapBandRange.z * biome.r * biome.a * land;
+    // Only forests stand as a canopy (0.5.3-rc.8): where the climate supports less than about half a forest, trees stand
+    // scattered and the land shows between them; rc.7 raised them all as a plate of 8 x the share (3 blocks over the open
+    // dry land by Catania, a step where the recording ended).
+    float predicted = wmapBandRange.z * smoothstep(0.35, 0.75, biome.r) * biome.a * land;
+    return mix(predicted, recorded.x, recorded.y);
+}
+float wmapCanopy(vec2 local, vec3 surface, float h, float bandWeight, vec4 bandBiome)
+{
+    return wmapCanopyWith(local, surface, h, bandWeight, bandBiome, wmapRecordedCanopy(local, 1));
 }
 
 // The displaced surface's height relative to the camera at a point: the ground, forest canopy on land, the push-down near
-// the start and the planet's curve. Stitched vertices average this final value at the ends of their coarse edge, so every
+// the start and the planet's curve. Stitched vertices take it at the end of their coarse edge they collapse onto, so every
 // term is a function of position only and edges cannot crack.
 float wmapFinalY(vec2 local, float lod)
 {
     float w;
     vec4 bandBiome;
-    vec3 surface = wmapGroundAt(local, lod, w, bandBiome);
+    // One lookup of the four-block recording for the ground and the canopy (0.5.3, WM-0032).
+    vec3 recTexel = wmapRecordedTexel(local, 0);
+    float recFade = wmapRecordedFade(local);
+    vec3 surface = wmapGroundFrom(local, lod, recTexel, recFade, w, bandBiome);
     // The sea is a flat plane at the sea surface (its stored height is its bed); land keeps its height above it, and so
     // does water standing above the sea, which is stored at its surface (Core/Semantic.cs).
     float h = max(0.0, surface.y);
-    h += wmapCanopy(local, surface, h, w, bandBiome);
+    h += wmapCanopyWith(local, surface, h, w, bandBiome, wmapRecordedCanopyFrom(recTexel, recFade, 1));
     float dist = wmapCameraDistance(local);
     float push = wmapPushAt(dist, h, 1.0 - smoothstep(-2.0, 2.0, surface.x)) + wmapJoinPush(dist, 0.0);
     return wmapOrigin.w + h - push - wmapDrop(dist) - wmapOrigin.z;
 }
 
-// The ground alone, for shading: canopy and push-down are smooth and leave it as it is. From the prediction only: recorded
-// ground differs from it by a few blocks at most (more is a structure, drawn as blocks), and four lookups of the
-// recordings per vertex would cost more than they show.
+// The ground with its forest canopy, for shading: the push-down is smooth and leaves it as it is. From the prediction only:
+// recorded ground differs from it by a few blocks at most (more is a structure, drawn as blocks), and four lookups of the
+// recordings per vertex would cost more than they show. The canopy counts since 0.5.3-rc.4: before, forest edges were
+// never shaded, and a forest read as a flat plate raised over the land.
 float wmapGround(vec2 local, float lod)
 {
     vec4 band, bandBiome;
     float w = wmapBandAt(local, band, bandBiome);
-    return max(0.0, wmapSurface(textureLod(wmapChart, wmapChartUV.xy + local * wmapChartUV.zw, lod), band, w).y);
+    vec3 surface = wmapSurface(textureLod(wmapChart, wmapChartUV.xy + local * wmapChartUV.zw, lod), band, w);
+    float h = max(0.0, surface.y);
+    return h + wmapCanopy(local, surface, h, w, bandBiome);
 }

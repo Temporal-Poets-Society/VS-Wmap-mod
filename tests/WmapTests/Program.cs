@@ -3,9 +3,22 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 
 int tests = 0;
-void Check(bool test, string name) { if (!test) throw new Exception(name); tests++; }
-void Near(double actual, double expected, string name) => Check(Math.Abs(actual - expected) < 1e-7, name + $": {actual} != {expected}");
-void Reject(Action action, string name) { try { action(); } catch (Exception e) when (e is InvalidDataException || e is EndOfStreamException) { tests++; return; } throw new Exception(name); }
+// A failed check is collected with its line and the run goes on, so one run shows every failure (0.5.3, WM-0041: the
+// first one stopped it). An exception still stops it; what failed before is printed with it.
+var failures = new List<string>();
+AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+{
+    foreach (string f in failures) Console.WriteLine("FAIL " + f);
+    Console.WriteLine($"Stopped after {tests} assertions ({failures.Count} failed) by: {e.ExceptionObject}");
+};
+void Check(bool test, string name, [System.Runtime.CompilerServices.CallerLineNumber] int line = 0) { tests++; if (!test) failures.Add($"line {line}: {name}"); }
+void Near(double actual, double expected, string name, [System.Runtime.CompilerServices.CallerLineNumber] int line = 0) => Check(Math.Abs(actual - expected) < 1e-7, name + $": {actual} != {expected}", line);
+void Reject(Action action, string name, [System.Runtime.CompilerServices.CallerLineNumber] int line = 0)
+{
+    try { action(); }
+    catch (Exception e) when (e is InvalidDataException || e is EndOfStreamException) { tests++; return; }
+    Check(false, name + " (not rejected)", line);
+}
 // World choices override independently; absent keys preserve either global value, including legacy false.
 foreach (bool shared in new[] { false, true })
 foreach (bool sight in new[] { false, true })
@@ -337,6 +350,25 @@ foreach (bool periodic in new[] { false, true })
     Check(RecordingRules.Differs(new MapSample(150, 9, TileData.Water), 110, 50, false) && !RecordingRules.Differs(new MapSample(150, 9, TileData.Water), 110, 50, true), "recording: a lake compares its surface");
     Check(RecordingRules.Shore(new MapSample(150, 9, TileData.Water), 110, false) && RecordingRules.Shore(new MapSample(110, 0, TileData.Land), 110, true)
         && !RecordingRules.Shore(new MapSample(125, 0, TileData.Land), 110, false), "recording: water against land is a shore, a height alone is not");
+    // The recorded canopy (0.5.3-rc.4) rides in a land sample's depth: 0 not known, 1 + blocks up to the treetops.
+    Check(RecordingRules.CanopyDepth(130, 120) == 11 && RecordingRules.CanopyDepth(120, 120) == 1 && RecordingRules.CanopyDepth(119, 120) == 1
+        && RecordingRules.CanopyDepth(400, 120) == 1 + RecordingRules.MaxCanopy, "canopy depth: 1 + treetops over the ground, open ground 1, capped");
+    Check(RecordingRules.Canopy(TileData.Land, 11) == 10 && RecordingRules.Canopy(TileData.Land, 1) == 0 && RecordingRules.Canopy(TileData.Land, 0) == -1
+        && RecordingRules.Canopy(TileData.Water, 5) == -1 && RecordingRules.Canopy(TileData.Ice, 3) == -1, "canopy read back: land only, older land samples unknown");
+    Check(RecordedTexels.CanopyAlpha(TileData.Land, 11) == 40 && RecordedTexels.CanopyAlpha(TileData.Land, 1) == 0 && RecordedTexels.CanopyAlpha(TileData.Land, 0) == 255
+        && RecordedTexels.CanopyAlpha(TileData.Water, 7) == 255 && RecordedTexels.CanopyAlpha(TileData.Land, 1 + RecordingRules.MaxCanopy) == 252, "canopy alpha: a quarter block a step, 255 unknown");
+    // A canopy in the depth leaves land's height, top and the semantic tiles as they were.
+    Check(Semantic.RelativeHeight(130, 11, TileData.Land, 110) == Semantic.RelativeHeight(130, 0, TileData.Land, 110)
+        && RecordedTexels.Top(130, 11, TileData.Land) == RecordedTexels.Top(130, 0, TileData.Land)
+        && !RecordingRules.Differs(new MapSample(122, 9, TileData.Land), 110, 12, false), "a canopy depth changes no land height");
+    {
+        var canopyTile = new TileData();
+        for (int i = 0; i < TileData.Count; i++) canopyTile.Set(i, new MapSample(130, i % 2 == 0 ? 9 : 0, TileData.Land));
+        var canopyHeights = new Half[TileData.Count * RecordedTexels.Halves];
+        var canopyRgba = new byte[TileData.Count * 4];
+        RecordedTexels.Build(canopyTile, canopyHeights, canopyRgba);
+        Check(canopyRgba[3] == 32 && canopyRgba[7] == 255 && (float)canopyHeights[0] == 131f, "recorded texels carry the canopy in the colour's alpha");
+    }
     // A flat land/sea mask has nothing finer than four blocks to sample.
     var flatPolicy = both with { FlatPrediction = true };
     close = ViewTiles.Select(view, t, cam, 1600, 900, flatPolicy);
@@ -580,8 +612,30 @@ foreach (var (width, level, radius) in new[] { (204800.0, 2, 1536.0), (204800.0,
     var key = new TileKey(0, 2, 10, 20);
     var rgba = BiomeTile.Sample(topo, key, Field, CancellationToken.None);
     Check(calls <= 34 * 34, $"biome tile samples every 16 blocks ({calls} calls)");
-    Check(BiomeTile.Unpack(BiomeTile.Pack(rgba)).AsSpan().SequenceEqual(rgba), "biome tile round trip");
+    var whole = BiomeTile.Unpack(BiomeTile.Pack(rgba));
+    Check(whole.Length == 2 * BiomeTile.HalfBytes && whole.AsSpan(0, BiomeTile.HalfBytes).SequenceEqual(rgba), "biome tile round trip");
+    bool noSeason = true;
+    for (int i = BiomeTile.HalfBytes; i < whole.Length; i += 4)
+        noSeason &= whole[i] == 0 && whole[i + 1] == 0 && whole[i + 2] == 128 && whole[i + 3] == 128;
+    Check(noSeason, "a biome tile without a season source carries none (the game's own season map, no wet season)");
     Reject(() => SemanticTile.Unpack(BiomeTile.Pack(rgba)), "a biome tile is not a semantic tile");
+    // 0.5.3-rc.5: the grass season below the biome, interpolated as the biome is; a 0.5.3-rc.4 server's tile (format 101,
+    // no season) still reads, with none.
+    SeasonSample Season(double x, double z) => SeasonSample.FromEarth(x < key.X * key.Span + key.Span / 2 ? 3 : 5,
+        Enumerable.Range(0, 24).Select(i => (float)(1.5 * Math.Cos(2 * Math.PI * (i + 0.5) / 24 - 2 * Math.PI * 0.6))).ToArray());
+    var seasoned = BiomeTile.Unpack(BiomeTile.Pack(BiomeTile.Sample(topo, key, Field, Season, CancellationToken.None)));
+    int first = BiomeTile.HalfBytes + (4 * TileData.Padded + 4) * 4, last = BiomeTile.HalfBytes + (4 * TileData.Padded + 124) * 4;
+    var wave = new SeasonSample(seasoned[first], seasoned[first + 1], seasoned[first + 2], seasoned[first + 3]);
+    Check(seasoned.Length == 2 * BiomeTile.HalfBytes && seasoned[first] == 133 && seasoned[first + 1] == 0 && seasoned[last] == 255 && seasoned[last + 1] == 255,
+        $"biome tiles carry Earth's grass season map below the biome (season 52: {seasoned[first]}, summer-dry: {seasoned[last]}/{seasoned[last + 1]})");
+    Check(Math.Abs(wave.WetnessAt(0.6) - 1.5) < 0.05 && Math.Abs(wave.WetnessAt(0.1) + 1.5) < 0.05,
+        $"a place's wet season survives as its yearly wave ({wave.WetnessAt(0.6):0.00} at its wettest, {wave.WetnessAt(0.1):0.00} half a year on)");
+    var old = RasterCodec.Pack(rgba, TileData.Padded, TileData.Padded, 101, System.IO.Compression.CompressionLevel.Fastest);
+    var fromOld = BiomeTile.Unpack(old);
+    Check(fromOld.Length == 2 * BiomeTile.HalfBytes && fromOld.AsSpan(0, BiomeTile.HalfBytes).SequenceEqual(rgba) && fromOld[BiomeTile.HalfBytes + 2] == 128,
+        "a biome tile from a server before 0.5.3-rc.5 reads, without a season");
+    Check(SeasonSample.FromEarth(-1, null) == SeasonSample.None && SeasonSample.FromEarth(6, null).Share == 97 && SeasonSample.FromEarth(6, null).Dry == 255,
+        "places without Earth's map get none; the steppe map is a short, dry season");
     for (int p = 0; p < TileData.Padded; p += 4)
     {
         double x = key.X * key.Span + (p - 0.5) * key.Step, z = key.Z * key.Span + (p - 0.5) * key.Step;
@@ -604,6 +658,32 @@ foreach (var (width, level, radius) in new[] { (204800.0, 2, 1536.0), (204800.0,
         int a = (z * TileData.Padded + 128 + k) * 4, b = (z * TileData.Padded + k) * 4;
         Check(west[a] == east[b] && west[a + 1] == east[b + 1] && west[a + 2] == east[b + 2], "neighbouring biome tiles agree where they overlap");
     }
+}
+// The season maps' rows (0.5.3-rc.5): each column the map's mean over its rows and over the noise's shift, as far terrain
+// sees a field; the vanilla grass map's summer green and late-autumn straw where the game has them.
+{
+    var strip = new byte[GrassSeasons.Rows * GrassSeasons.Columns * 4];
+    int w = 128, h = 16;
+    var map = new int[w * h];
+    for (int y = 0; y < h; y++)
+    for (int x = 0; x < w; x++)
+        map[y * w + x] = unchecked((int)0xFF000000) | (x < 64 ? (40 << 16) | (200 << 8) | 20 : (220 << 16) | (180 << 8) | 60) + (y % 2);
+    GrassSeasons.Row(strip, GrassSeasons.VanillaGrass, map, w, h);
+    int Col(int c) => (GrassSeasons.VanillaGrass * GrassSeasons.Columns + c) * 4;
+    Check(strip[Col(10)] == 40 && strip[Col(10) + 1] == 200 && strip[Col(100)] == 220 && strip[Col(100) + 1] == 180, "season rows keep each season's colour");
+    Check(strip[Col(60)] > 40 && strip[Col(60)] < 220, "season rows blend across the noise's shift where the season turns");
+    GrassSeasons.CopyRow(strip, GrassSeasons.VanillaGrass, 3);
+    Check(strip.AsSpan(3 * GrassSeasons.Columns * 4, GrassSeasons.Columns * 4).SequenceEqual(strip.AsSpan(Col(0), GrassSeasons.Columns * 4)), "a missing Earth map takes the game's own row");
+    // The climate's altitude row (0.5.3-rc.14, WM-0022): written from the game's adjustments and read back between columns.
+    GrassSeasons.AltitudeRow(strip, above => (int)(above / 1.5f), 274);
+    double cool200 = GrassSeasons.ReadAltitude(strip, 200, 274);
+    Check(Math.Abs(cool200 - 200 / 1.5) < 1.6, $"vanilla's cooling at 200 blocks read back ({cool200:0.00})");
+    double coolSea = GrassSeasons.ReadAltitude(strip, 0, 274);
+    Check(Math.Abs(coolSea) < 1.1 && GrassSeasons.ReadAltitude(strip, -64, 274) < -40, "no cooling at the sea, warmer below it");
+    GrassSeasons.AltitudeRow(strip, above => (int)(0.0065 * above * 33 * 4.25), 274);
+    double coolReal = GrassSeasons.ReadAltitude(strip, 200, 274);
+    Check(Math.Abs(coolReal - 0.0065 * 200 * 33 * 4.25) < 1.6, $"a real lapse (33 m a block) read back ({coolReal:0.0})");
+    Check(strip.AsSpan(Col(0), GrassSeasons.Columns * 4).SequenceEqual(strip.AsSpan((GrassSeasons.VanillaGrass * GrassSeasons.Columns) * 4, GrassSeasons.Columns * 4)), "the altitude row leaves the colour rows alone");
 }
 // GPU drivers reject shader source with non-ASCII characters, even in comments (AMD: "unexpected end of file").
 {
@@ -959,7 +1039,23 @@ Check(partial[119 * DayGrid.Width] == 0 && partial[120 * DayGrid.Width] == 132 &
     Check(RecordedColor.Has(lit) && RecordedColor.Light(lit) == 14 && RecordedColor.R(lit) == 0x56 && RecordedColor.B(lit) == 0x12, "colour and light packed");
     Check(!RecordedColor.Has(12345) && RecordedColor.Light(12345) == 0 && RecordedColor.Light(RecordedColor.Pack(0, 99)) == 31, "no colour before; light clamped");
     Check(RecordedColor.Changed(0, dark) && RecordedColor.Changed(dark, lit) && RecordedColor.Changed(lit, dark), "a first colour, a light coming on or going out is a change");
-    Check(!RecordedColor.Changed(dark, RecordedColor.Pack(0x654321, 0)) && !RecordedColor.Changed(lit, RecordedColor.Pack(0x111111, 13)) && !RecordedColor.Changed(lit, 12345), "a colour alone, a small light change or no colour is not");
+    Check(!RecordedColor.Changed(dark, RecordedColor.Pack(0x1A3C5E, 0)) && !RecordedColor.Changed(lit, RecordedColor.Pack(0x123456, 13)) && !RecordedColor.Changed(lit, 12345), "a small colour change alone, a small light change or no colour is not");
+    Check(RecordedColor.Changed(dark, RecordedColor.Pack(0x654321, 0)), "a colour that moved far is a change (grass recorded again, 0.5.3-rc.6)");
+    // Grassy soil is recorded as grass, which far terrain draws in its own seasonal grass colours (0.5.3-rc.7).
+    int soilColor = (0x30 << 16) | (0x48 << 8) | 0x60;
+    int grass = RecordedColor.Pack(RecordingRules.TopColor("sparse", () => soilColor), 14);
+    Check(RecordedColor.IsGrass(grass) && RecordedColor.Light(grass) == 14 && RecordedColor.G(grass) == 134,
+        "grassy soil is recorded as grass, a plain green, with its light");
+    Check(RecordingRules.TopColor("none", () => soilColor) == soilColor && RecordingRules.TopColor(null, () => soilColor) == soilColor
+        && !RecordedColor.IsGrass(RecordedColor.Pack(soilColor, 0)), "bare soil and other blocks keep the game's colour");
+    var grassTile = new TileData(); RecordedColor.Mark(grassTile);
+    grassTile.Set(200, new MapSample(100, 1, TileData.Land, grass));
+    grassTile.Set(201, new MapSample(100, 1, TileData.Land, RecordedColor.Pack(soilColor, 0)));
+    var grassTexels = new Half[TileData.Count * RecordedTexels.Halves]; var grassRgba = new byte[TileData.Count * 4];
+    RecordedTexels.Build(grassTile, grassTexels, grassRgba);
+    Check((float)grassTexels[200 * RecordedTexels.Halves + 2] == 0 && (float)grassTexels[201 * RecordedTexels.Halves + 2] == 1,
+        "recorded grass is drawn in far terrain's colours, other ground in its recorded colour");
+    Check(RecordedColor.Changed(RecordedColor.Pack(0x59A0AD, 0), RecordedColor.Pack(RecordedColor.GrassMarker, 0)), "grass recorded tan before is recorded again as grass");
 
     // Recorded over predicted, per cell. Texels: recorded cells covered, at their top (land's top face, water's surface);
     // the cells around take a neighbour's top and colour with no coverage.
@@ -978,15 +1074,14 @@ Check(partial[119 * DayGrid.Width] == 0 && partial[120 * DayGrid.Width] == 132 &
     Check((float)heights[uncolored * q] == 121 && (float)heights[uncolored * q + 1] == 1 && (float)heights[uncolored * q + 2] == 0, "a recording from before 0.5: covered, no colour");
     Check((float)heights[(land + 1) * q] == 151 && (float)heights[(land + 1) * q + 1] == 0 && texels[(land + 1) * 4] == 255, "a neighbour takes the top and colour, without coverage");
     Check((float)heights[5 * q + 1] == 0 && (float)heights[5 * q] == 0, "far from any recording: nothing");
-    Check(RecordedTexels.Smooth(0, 30, false, 12, true) == 12, "not recorded: the prediction");
-    Check(RecordedTexels.Smooth(1, 14, false, 12, true) == 12 && RecordedTexels.Smooth(1, 40, false, 12, true) == 12, "recorded land where the band predicts land: the predicted height (differences are recorded block by block)");
-    Check(RecordedTexels.Smooth(1, 14, false, 12, false) == 14 && RecordedTexels.Smooth(1, 6, false, -20, true) == 6, "recorded land without a band, or where it predicts sea: the recorded height");
-    Check(RecordedTexels.Smooth(1, 0, true, -25, true) == -25 && RecordedTexels.Smooth(1, 30, true, 30, true) == 30 && RecordedTexels.Smooth(1, 30, true, 26, true) == 30, "the sea keeps its predicted bed, a lake its recorded surface");
-    Check(Math.Abs(RecordedTexels.Smooth(0.25, 16, false, 12, false) - 13) < 1e-9, "fading in: between");
-    Check(TerracePatch.CellTop(160, 151, false, 150.4, false, true) == 160, "terraces: a two-block recording wins");
-    Check(TerracePatch.CellTop(null, 152, false, 150.4, false, true) == 150 && TerracePatch.CellTop(null, 152, false, 150.4, false, false) == 152, "terraces: four-block land keeps the band's prediction, else the recording");
-    Check(TerracePatch.CellTop(null, 110.875, true, 150.4, false, true) == 110.875 && TerracePatch.CellTop(null, 151, false, 109.875, true, true) == 151, "terraces: recorded water, or land where water is predicted, is recorded");
-    Check(TerracePatch.CellTop(null, null, false, 150.4, false, true) == 150 && TerracePatch.CellTop(null, null, false, 109.875, true, true) == 109.875, "terraces: the prediction at a whole block, water at its surface");
+    Check(RecordedTexels.Smooth(0, 30, false, 12) == 12, "not recorded: the prediction");
+    Check(RecordedTexels.Smooth(1, 14, false, 12) == 14 && RecordedTexels.Smooth(1, 6, false, -20) == 6, "recorded land: the recorded height (WM-D61), also where the prediction is sea");
+    Check(RecordedTexels.Smooth(1, 0, true, -25) == -25 && RecordedTexels.Smooth(1, 30, true, 30) == 30 && RecordedTexels.Smooth(1, 30, true, 26) == 30, "the sea keeps its predicted bed, a lake its recorded surface");
+    Check(Math.Abs(RecordedTexels.Smooth(0.25, 16, false, 12) - 13) < 1e-9, "fading in: between");
+    Check(TerracePatch.CellTop(160, 151, false, 150.4, false) == 160, "terraces: a two-block recording wins");
+    Check(TerracePatch.CellTop(null, 152, false, 150.4, false) == 152 && TerracePatch.CellTop(null, 151.6, false, 150.4, false) == 152, "terraces: four-block land at its recorded height (WM-D61), at a whole block");
+    Check(TerracePatch.CellTop(null, 110.875, true, 150.4, false) == 110.875 && TerracePatch.CellTop(null, 151, false, 109.875, true) == 151, "terraces: recorded water, or land where water is predicted, is recorded");
+    Check(TerracePatch.CellTop(null, null, false, 150.4, false) == 150 && TerracePatch.CellTop(null, null, false, 109.875, true) == 109.875, "terraces: the prediction at a whole block, water at its surface");
 
     // Terraces: tops at whole blocks, and the walls close every edge between cells (each edge, split into one-block
     // pieces, is used an even number of times inside the patch), whatever the heights.
@@ -1049,6 +1144,19 @@ Check(partial[119 * DayGrid.Width] == 0 && partial[120 * DayGrid.Width] == 132 &
     // Far terrain starts where the game's chunks fade, or nearer at the first chunk column not loaded (0.5.0-pre.2: a band of sky
     // after the view distance grew, while those columns loaded).
     Check(FarStart.For(512) == 384 && FarStart.For(40) == 48, "far terrain from 0.75 of the view distance, at least 48");
+    // 0.5.3-rc.5: far terrain covers the game's blocks from where they fade (0.8 of the view distance); the loaded-columns
+    // mask reaches that far at the game's largest view distance, a column to spare.
+    // 0.5.3-rc.8: predicted forest stands at the recorded forest's middle treetop height once enough is recorded.
+    var canopyTile = new TileData();
+    for (int k = 0; k < 400; k++) canopyTile.Set((1 + k / 128) * TileData.Padded + 1 + k % 128, new MapSample(100, RecordingRules.CanopyDepth(100 + (k < 300 ? 15 : 3), 100), TileData.Land));
+    canopyTile.Set(5 * TileData.Padded + 5, new MapSample(100, RecordingRules.CanopyDepth(100, 100), TileData.Land));
+    var hist = RecordedTexels.CanopyHistogram(canopyTile);
+    int median = RecordedTexels.MedianCanopy(new[] { hist, null }, out int treeCells);
+    Check(hist[15] == 300 && hist[3] == 100 && hist[0] == 0 && treeCells == 400 && median == 15, $"recorded treetops counted by height (median {median} of {treeCells})");
+    Check(FarStart.CanopyFor(15, 400) == 15 && FarStart.CanopyFor(15, 100) == 8 && FarStart.CanopyFor(60, 400) == 40 && FarStart.CanopyFor(0, 0) == 8,
+        "predicted forest at the recorded height once enough is recorded, held to 4..40, else 8");
+    Check(FarStart.GameFade(512) == 409.6 && FarStart.GameFade(0) == 0 && FarStart.MaskReach * 32 >= FarStart.GameFade(1536) + 32,
+        "far terrain covers the game's fading blocks from 0.8 of the view distance, inside the loaded-columns mask");
     double loadedTo = FarStart.LoadedRadius((cx, cz) => Math.Abs(cx - 100) <= 12 && Math.Abs(cz - 100) <= 12, 100 * 32 + 16, 100 * 32 + 16, 0.75 * 700);
     Check(loadedTo == 12 * 32 + 16, $"loaded to the 12th column around ({loadedTo})");
     Check(FarStart.For(700, loadedTo) == 400, "after growing the view distance, far terrain starts where the loaded columns end");
@@ -1194,6 +1302,38 @@ Check(partial[119 * DayGrid.Width] == 0 && partial[120 * DayGrid.Width] == 132 &
     Parallel.For(0, 256, new ParallelOptions { MaxDegreeOfParallelism = 8 }, i => { if (During()) Interlocked.Increment(ref leaked); Thread.SpinWait(2000); });
     Check(leaked == 0, $"pool threads left on GLO-90 after the raster ({leaked} on built-in heights)");
 }
+// A four-block sample's height is its cell's mean generated ground (WM-0021, WM-D61).
+{
+    var generated = new ushort[1024];
+    for (int z = 0; z < 32; z++) for (int x = 0; x < 32; x++) generated[z * 32 + x] = (ushort)(100 + x);
+    // Cell columns 0..3 (sample column 2): heights 100..103, mean 101.5, rounded 102.
+    Check(RecordingRules.CellMean(generated, 2, 2, 102) == 102, "a slope's cell takes its mean ground");
+    Check(RecordingRules.CellMean(generated, 2, 2, 103) == 103, "a block of snow on the sample column stays on the mean");
+    Check(RecordingRules.CellMean(generated, 2, 2, 110) == null, "a sample far off the generated ground (a ruin, a pond) keeps its own height");
+    Check(RecordingRules.CellMean(null, 2, 2, 102) == null && RecordingRules.CellMean(generated, 1, 2, 101) == null, "no height map or no whole cell: no mean");
+    // A bank beside a river: half the cell is the bed 6 blocks down, under water; the bank keeps its own surface.
+    var bank = new ushort[1024];
+    for (int z = 0; z < 32; z++) for (int x = 0; x < 32; x++) bank[z * 32 + x] = (ushort)(x < 2 ? 105 : 111);
+    Check(RecordingRules.CellMean(bank, 2, 2, 111) == 111, "a bank's cell leaves the river bed out of its mean");
+    // A ledge: 8 columns at 100 and 8 at 104, the sample on the high side, stays on its side.
+    Check(RecordingRules.CellMean(bank.Select(h => (ushort)(h == 105 ? 100 : 104)).ToArray(), 2, 2, 104) == 104, "a ledge's high side keeps its height");
+    // Open ground only: a canopy measured from the column's own ground is 1 + nothing.
+    Check(RecordingRules.CanopyDepth(0, 0) == 1 && RecordingRules.CanopyDepth(111, 111) == 1, "open ground's canopy depth is 1");
+}
+
+// The pick's share of host blocks (WM-0025): only host blocks within the deposit's band count, over the whole column.
+{
+    var hostRock = new HashSet<int> { 7, 9 };
+    int[] rockColumn = new int[100];
+    for (int y = 0; y < 100; y++) rockColumn[y] = y < 40 ? 7 : y < 60 ? 9 : 3;
+    Check(OreHeat.HostShare(rockColumn, null, 0, 0, 0, 80) == 1, "no host list: every block hosts the ore");
+    Check(Math.Abs(OreHeat.HostShare(rockColumn, hostRock, 0, 0, 0, 80) - 0.60) < 1e-9, "whole column: 60 host blocks of 100");
+    Check(Math.Abs(OreHeat.HostShare(rockColumn, hostRock, 1, 0.5, 0, 80) - 0.20) < 1e-9, "following the surface: from half the surface (40) up to it, hosts at 40-59");
+    Check(Math.Abs(OreHeat.HostShare(rockColumn, hostRock, 2, 10, 19, 80) - 0.10) < 1e-9, "a fixed band: 10 to 19");
+    Check(Math.Abs(OreHeat.HostShare(rockColumn, hostRock, 3, 0, 30, 80) - 0.10) < 1e-9, "below the surface: 50 to 80, hosts at 50-59");
+    Check(OreHeat.HostShare(rockColumn, new HashSet<int> { 5 }, 0, 0, 0, 80) == 0, "no host rock in the column: 0");
+}
+
 // Ore heat maps (WM-D47, tiled in WM-D48): levels, the view's oreTiles, cell samples, stand-ins from coarser oreTiles, stored oreTiles; colours and words.
 {
     var ring = new Topology { StartX = 0, Width = 5009920, Height = 2003968, Wraps = true };
@@ -1305,7 +1445,30 @@ Check(partial[119 * DayGrid.Width] == 0 && partial[120 * DayGrid.Width] == 132 &
     Check(OreHeat.WordIndex(0.025) == -1 && OreHeat.WordIndex(0.026) == 0 && OreHeat.WordIndex(0.14) == 1 && OreHeat.WordIndex(0.3) == 2 && OreHeat.WordIndex(5) == 5, "pick words");
     Check(OreHeat.Short(0.44) == "0.4" && OreHeat.Short(130.2) == "130" && OreHeat.Short(2400) == "2.4k" && OreHeat.Short(18000) == "18k", "short block counts");
 }
-Console.WriteLine($"PASS: {tests} assertions (topology, camera, partial edges, coordinates, codecs, distance fields, world raster, rivers, detail selection, player arrow, wind layer, far terrain mesh, teleport columns, day grid, line of sight, recording levels, mask geometry, sight cells, ring copies, markers, paper maps, sight holes, heading, climate raster heights, ore heat maps).");
+// The far shaders' constants against C#'s (0.5.3, WM-0039): the shaders name them, and a change on one side fails here.
+{
+    double ShaderConst(string file, string name)
+    {
+        string text = File.ReadAllText(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "assets", "wmap", "shaderincludes", file)));
+        var m = System.Text.RegularExpressions.Regex.Match(text, @"const\s+(?:int|float)\s+" + name + @"\s*=\s*([0-9.]+)\s*;");
+        if (!m.Success) throw new Exception($"{file}: no constant {name}");
+        return double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+    }
+    Check(ShaderConst("wmapfartiles.ash", "WmapSlots") == FarTileWindow.Slots, "shader WmapSlots is FarTileWindow.Slots");
+    Check(ShaderConst("wmapfartiles.ash", "WmapSlotTexels") == FarTileWindow.SlotTexels, "shader WmapSlotTexels is FarTileWindow.SlotTexels");
+    Check(ShaderConst("wmapfartiles.ash", "WmapAtlasTexels") == FarTileWindow.AtlasTexels, "shader WmapAtlasTexels is FarTileWindow.AtlasTexels");
+    Check(ShaderConst("wmapfartiles.ash", "WmapSeamReach") == FarTileWindow.SeamReach, "shader WmapSeamReach is FarTileWindow.SeamReach");
+    Check(ShaderConst("wmapfarheight.ash", "JoinOverlap") == TerracePatch.JoinOverlap, "shader JoinOverlap is TerracePatch.JoinOverlap");
+    Check(SlotTable.Count == FarTileWindow.Slots * FarTileWindow.Slots, "slot table holds WmapSlots * WmapSlots slots");
+}
+if (failures.Count > 0)
+{
+    foreach (string f in failures) Console.WriteLine("FAIL " + f);
+    Console.WriteLine($"FAIL: {failures.Count} of {tests} assertions");
+    return 1;
+}
+Console.WriteLine($"PASS: {tests} assertions (topology, camera, partial edges, coordinates, codecs, distance fields, world raster, rivers, detail selection, player arrow, wind layer, far terrain mesh, teleport columns, day grid, line of sight, recording levels, mask geometry, sight cells, ring copies, markers, paper maps, sight holes, heading, climate raster heights, ore heat maps, shader constants).");
+return 0;
 
 bool Throws(Action action) { try { action(); return false; } catch (Exception) { return true; } }
-void Near2(double actual, double expected, double tolerance, string name) => Check(Math.Abs(actual - expected) <= tolerance, name + $": {actual} != {expected}");
+void Near2(double actual, double expected, double tolerance, string name, [System.Runtime.CompilerServices.CallerLineNumber] int line = 0) => Check(Math.Abs(actual - expected) <= tolerance, name + $": {actual} != {expected}", line);

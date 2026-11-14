@@ -60,7 +60,8 @@ public sealed class FarMesh
                 if (!used) continue;
                 index[(j + n) * side + i + n] = vertices.Count / Floats;
                 float sx = 0, sz = 0;
-                // Odd vertices on the outer edge sit midway along a coarse cell's edge: average the neighbours.
+                // Odd vertices on the outer edge sit midway along a coarse cell's edge: the vertex shader collapses each onto
+                // its neighbour at local - stitch, so the rings share their edge vertices and leave no T-junction (WM-0028).
                 if (stitch && Math.Abs(i) == n && (j & 1) != 0) sz = (float)cell;
                 else if (stitch && Math.Abs(j) == n && (i & 1) != 0) sx = (float)cell;
                 vertices.Add((float)(i * cell)); vertices.Add((float)(j * cell)); vertices.Add(sx); vertices.Add(sz);

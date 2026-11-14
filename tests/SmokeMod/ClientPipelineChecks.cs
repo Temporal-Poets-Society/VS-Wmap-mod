@@ -104,7 +104,7 @@ public static class ClientPipelineChecks
             // The first session in a new folder keeps its one-block recordings (0.4.11 took them for 0.4.3's and deleted them).
             if (!c.HasObservation(fine) || c.Get(fine).Data.Heights[(1 + 10) * TileData.Padded + 1 + 11] != 250) throw new Exception("The first session's one-block recordings were lost on reconnecting");
         }
-        Wmap.Server.AtlasServer.TrimCache(observations, 0);
+        Wmap.Core.TileCache.Trim(observations, 0);
         using (var c = new TileClient(channel, info, config, Path.Combine(path, "new-prediction-revision"), observations))
         {
             var observed = new TileKey(1, 2, 0, 0);

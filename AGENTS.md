@@ -9,7 +9,7 @@ WM-Pnn); test results: `docs\testing.md`.
 ## Repository
 - Trunk `main`, tracking the private `origin` (`andrisberzins-1/VS-Wmap-mod`); no public repo. Published versions
   are tags (`v0.5.0`, `v0.5.1`); old lines are `archive/*` tags.
-- `main` carries 0.5.3-rc.1 and later work: test builds after the 0.5.1 release, not released.
+- `main` carries 0.5.3 (built 14 November 2026; publishing, the tag and the push are the author's).
 
 ## Build
 - First `.\tools\Prepare-References.ps1 -GamePath "$env:APPDATA\Vintagestory"`: it copies the game DLLs into
@@ -19,17 +19,18 @@ WM-Pnn); test results: `docs\testing.md`.
   the same version. The 0.4.x-0.5.1 zips there (some with `.sha256`, git-ignored) are the only local copies.
 
 ## Test
-- `dotnet run --project tests\WmapTests\WmapTests.csproj -c Release` (core assertions; 108,773 at 0.5.2).
+- `dotnet run --project tests\WmapTests\WmapTests.csproj -c Release` (core assertions; 108,832 at 0.5.3; a run lists every failed check with its line).
 - `.\tools\Run-PlaytestChecks.ps1 -EarthRoot "C:\VS mods\Earth" -Output .local\playtest-after` (with
   `tests\PlaytestTests`).
 - Smoke: `dotnet build tests\SmokeMod\SmokeMod.csproj -c Release`, then
   `.\tools\Run-Smoke.ps1 -Profile earth|cylinder|plain` (an isolated server with sibling mods from `..\`;
-  `-SuiteRoot` from a worktree). Stale defaults (WM-0008): it looks for `earthmap-*.zip`, for an AstraTerra
-  `dev.1-earthtest` zip under `..\AstraTerra` (now `forks\AstraTerra`, and that zip is gone), and adds no Hydrology,
-  which Earth 2.0 needs. Pass `-EarthZip`, `-HydrologyZip` and `-AstraZip`. Never install the smoke mod in a normal
-  world.
+  `-SuiteRoot` from a worktree). It takes the newest `earth-*`, `hydrology-*`, `cylinderworld-*`, `sea-*` and
+  `astraearth-*` zips from the mods' `release\` folders (AstraTerra's from `forks\AstraTerra\dist`) or the player's Mods
+  folder (WM-0008, WM-0013); `-EarthZip`, `-HydrologyZip`, `-AstraZip` and the like pick others. Never install the
+  smoke mod in a normal world.
 - In game: the AgentBridge bench; for Earth load the Earth, Cylinder World and Hydrology zips and an Earth play
-  style. Not verified yet: the graphical client in play, multiplayer, NVIDIA or Intel GPUs, Earth 2.0 worlds.
+  style. Seen on the bench with Earth 2.0 worlds (0.5.3 looks, WM-0020 to WM-0026); not verified yet: multiplayer, NVIDIA
+  or Intel GPUs.
 
 ## Release
 - Bump `version` in `modinfo.json`; the README's title line; the entry at the top of `CHANGELOG.md`; the release
@@ -39,8 +40,9 @@ WM-Pnn); test results: `docs\testing.md`.
 - Network protocol: channel `wmap-v2` (`src\Protocol.cs`). Append new message types and ProtoMember fields, never
   renumber; a protocol change means client and server need the same version (0.5.2 changed it).
 - Predictions never generate chunks (WM-D03). Integrations with Earth, Cylinder World, Sea and ship mods are by
-  reflection (WM-D04); Earth's terrain columns are read by reflection, not through a public API, so an Earth rename
-  breaks the map quietly.
+  reflection (WM-D04); Earth's terrain columns are read by reflection, not through a public API. A renamed geometry
+  member stops the atlas with an error naming it; an unreadable terrain model falls back to observed terrain with an
+  error in the server log (WM-0033).
 - Ore heat maps hand Earth vanilla's simulated rock column where Earth keeps vanilla strata (WM-D51); `/wmapore`
   compares a cell with the pick where you stand.
 - Recorded terrain wins over predictions (WM-D11, D29, D41).

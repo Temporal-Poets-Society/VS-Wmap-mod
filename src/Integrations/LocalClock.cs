@@ -23,9 +23,9 @@ public sealed class LocalClock
 
     readonly ICoreAPI api;
     bool resolved;
-    global::System.Func<double, IWorldAccessor, double> astraLongitude;
-    global::System.Func<bool> astraShowsHour;
-    global::System.Func<double, double?> earthLongitude;
+    System.Func<double, IWorldAccessor, double> astraLongitude;
+    System.Func<bool> astraShowsHour;
+    System.Func<double, double?> earthLongitude;
 
     public LocalClock(ICoreAPI api) { this.api = api; }
 
@@ -47,7 +47,7 @@ public sealed class LocalClock
 
     /// <summary>The hour (0..hours per day) at world <paramref name="x"/>, <paramref name="z"/>, or null where it is kept back.
     /// <paramref name="x"/> as the entity has it: Astra Terra and Earth are asked with the X their sky is given.</summary>
-    public double? Read(double x, double z, global::System.Func<double, double, GeoPosition> geography, global::System.Func<double, double> canonical)
+    public double? Read(double x, double z, System.Func<double, double, GeoPosition> geography, System.Func<double, double> canonical)
     {
         var calendar = api.World?.Calendar;
         if (calendar == null) return null;
@@ -100,7 +100,7 @@ public sealed class LocalClock
             var observer = astra?.GetType("AstraTerra.Astronomy.ObserverLongitude")?.GetMethod("ForObserver", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(double), typeof(IWorldAccessor) }, null);
             if (observer != null && observer.ReturnType == typeof(double))
             {
-                astraLongitude = (global::System.Func<double, IWorldAccessor, double>)observer.CreateDelegate(typeof(global::System.Func<double, IWorldAccessor, double>));
+                astraLongitude = (System.Func<double, IWorldAccessor, double>)observer.CreateDelegate(typeof(System.Func<double, IWorldAccessor, double>));
                 var display = astra.GetType("AstraTerra.Client.Calendar.VanillaCalendarHooks")?.GetProperty("Display", BindingFlags.Public | BindingFlags.Static);
                 var shows = display == null ? null : astra.GetType("AstraTerra.Config.CalendarDisplayParser")?.GetMethod("ShowsHour", BindingFlags.Public | BindingFlags.Static, null, new[] { display.PropertyType }, null);
                 if (shows != null && shows.ReturnType == typeof(bool)) astraShowsHour = () => (bool)shows.Invoke(null, new[] { display.GetValue(null) });
@@ -111,7 +111,7 @@ public sealed class LocalClock
         {
             var earth = api.ModLoader.Systems.FirstOrDefault(s => s.GetType().FullName == "EarthMap.EarthMapSystem");
             var at = earth?.GetType().GetMethod("LongitudeAt", BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(double) }, null);
-            if (at != null && at.ReturnType == typeof(double?)) earthLongitude = (global::System.Func<double, double?>)at.CreateDelegate(typeof(global::System.Func<double, double?>), earth);
+            if (at != null && at.ReturnType == typeof(double?)) earthLongitude = (System.Func<double, double?>)at.CreateDelegate(typeof(System.Func<double, double?>), earth);
         }
         catch (Exception e) { earthLongitude = null; api.Logger?.Warning("[wmap] Earth's sky longitude was not found for the HUD clock: {0}", e.Message); }
     }

@@ -2,7 +2,7 @@
   "type": "code",
   "modid": "wmap",
   "name": "World Map",
-  "version": "0.5.3-rc.3",
+  "version": "0.5.3",
   "description": "World map and minimap with nautical charts, terrain shading, exploration and paper map sharing. Optional Earth and Cylinder World predictions, Sea wind charts, and experimental distant terrain. In development.",
   "authors": [
     "Andris"

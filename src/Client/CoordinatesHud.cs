@@ -15,7 +15,8 @@ namespace Wmap.Client;
 /// lines and stays above the game's intro tip. Where the world has one clock, the hour once, unlabelled; on worlds
 /// without geography the clocks alone ("Time 12:15", or "16:46 local · 12:15 UTC"). The <c>CoordinatesHudTime</c>
 /// setting hides them (0.5.3). The <c>CoordinatesHud</c> setting,
-/// toggled with Ctrl+Shift+V, hides the box (0.4.9).</summary>
+/// toggled with Ctrl+Shift+V, hides the box (0.4.9). It draws as the game's HUD boxes do: under every dialog and in the
+/// HUD depth layer, so whatever opens in its corner covers it (0.5.3-rc.11, WM-0026).</summary>
 public sealed class CoordinatesHud : HudElement
 {
     public const string HotkeyCode = "wmapcoordinates";
@@ -30,7 +31,9 @@ public sealed class CoordinatesHud : HudElement
     // The game toggles it through the hotkey's handler (WmapSystem), which also stores the setting.
     public override string ToggleKeyCombinationCode => null;
     public override bool Focusable => false;
-    public override double DrawOrder => 0.21;
+    // Under every dialog and the game's other HUD boxes, over the minimap (0.07): 0.21 drew it over the inventories (0.2)
+    // and anything else that reached its corner, a chisel panel among them (0.5.3-rc.11, WM-0026).
+    public override double DrawOrder => 0.08;
 
     public CoordinatesHud(ICoreClientAPI api, WmapClient client) : base(api) { this.client = client; clock = new LocalClock(api); }
 
@@ -74,15 +77,24 @@ public sealed class CoordinatesHud : HudElement
         var (x, y) = Place(w, h, gap);
         x = Math.Floor(x); y = Math.Floor(y);
         Background((int)Math.Ceiling(w), (int)Math.Ceiling(h));
-        // Drawn as a composer draws its static elements (GuiComposer.Render: Render2DTexture at whole pixels, not the
-        // premultiplied call), so the fill comes out exactly as dark as vanilla's coordinates box.
-        capi.Render.Render2DTexture(background.TextureId, (float)x, (float)y, backgroundW, backgroundH, 50);
-        double lineY = y + pad;
-        for (int i = 0; i < count; i++)
+        // In the HUD's own depth, as HudElement.OnRenderGUI draws a HUD's composers: 150 back. Drawn at the dialog layer's
+        // own depth (0.5.3-rc.10 and before), the box stood in front of the HUDs drawn after it, which failed the depth
+        // test where they met it and went missing there (WM-0026).
+        capi.Render.GlPushMatrix();
+        capi.Render.GlTranslate(0f, 0f, -150f);
+        try
         {
-            capi.Render.Render2DTexturePremultipliedAlpha(lines[i].TextureId, x + pad, lineY, lines[i].Width, lines[i].Height, 51);
-            lineY += lines[i].Height;
+            // Drawn as a composer draws its static elements (GuiComposer.Render: Render2DTexture at whole pixels, not the
+            // premultiplied call), so the fill comes out exactly as dark as vanilla's coordinates box.
+            capi.Render.Render2DTexture(background.TextureId, (float)x, (float)y, backgroundW, backgroundH, 50);
+            double lineY = y + pad;
+            for (int i = 0; i < count; i++)
+            {
+                capi.Render.Render2DTexturePremultipliedAlpha(lines[i].TextureId, x + pad, lineY, lines[i].Width, lines[i].Height, 51);
+                lineY += lines[i].Height;
+            }
         }
+        finally { capi.Render.GlPopMatrix(); }
     }
 
     void Line(int i, string text)

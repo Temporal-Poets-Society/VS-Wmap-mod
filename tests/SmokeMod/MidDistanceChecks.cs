@@ -783,7 +783,7 @@ public static class MidDistanceChecks
                         var inverse = Matrix4.Invert(viewMatrix * projection);
                         // A gap: a sea pixel where far terrain should draw (past 0.75 of the view distance, or over a column not
                         // loaded: FarStart.Draws) and nothing is drawn. Loaded columns nearer are the real terrain's.
-                        double edge = frame.DrawFrom + 8; int band = 0, gap = 0;
+                        double edge = frame.DrawFrom + 8; int band = 0, gap = 0; var where = new List<string>();
                         var columnOffset = FarStart.MaskOffset(sx, sz, sx, sz);
                         for (int py = 0; py < H; py += 2)
                         for (int pxl = 0; pxl < W; pxl += 2)
@@ -795,7 +795,7 @@ public static class MidDistanceChecks
                             double along = (sea - eye) / dir.Y, d = along * Math.Sqrt(dir.X * dir.X + dir.Z * dir.Z);
                             if (d < edge || d > 760 || !FarStart.Draws(columns, columnOffset, along * dir.X, along * dir.Z, d, frame.Start)) continue;
                             band++;
-                            if (px[py * W + pxl] == Clear) gap++;
+                            if (px[py * W + pxl] == Clear) { gap++; if (where.Count < 6) where.Add($"({pxl},{py}) at {d:0} blocks"); }
                         }
                         worstGap = Math.Max(worstGap, gap);
                         // The far sea is one surface across the terraces' edge: no step in colour between rows of sea from where the
@@ -816,7 +816,7 @@ public static class MidDistanceChecks
                             stepPixels++; worstStep = Math.Max(worstStep, step);
                             if (step > 8) steps++;
                         }
-                        lines.Add($"{view}{(double.IsInfinity(loaded) ? "" : $" (loaded to {loaded})")}: start {frame.Start:0}, {gap} of {band} sea pixels undrawn");
+                        lines.Add($"{view}{(double.IsInfinity(loaded) ? "" : $" (loaded to {loaded})")}: start {frame.Start:0}, {gap} of {band} sea pixels undrawn{(where.Count > 0 ? " " + string.Join(", ", where) : "")}");
                         if (first == null) first = px;
                         else if (view == 512 && double.IsInfinity(loaded) && lines.Count == 5)
                         {

@@ -7,6 +7,7 @@ uniform float wmapHeightScale;            // blocks from the sea surface to the 
 uniform sampler2D wmapPlantTint;          // the game's climate colour maps (264 x 264, 4 texels of padding)
 uniform sampler2D wmapWaterTint;
 uniform vec4 wmapTint;                    // 1 when the colour maps are loaded; unused
+uniform sampler2D wmapGrassSeasons;       // the season maps' rows over the year (Core/GrassSeasons.cs): 0-6 Earth's grass maps, 7 the game's, 8 oak, 9 needles
 
 // The far water's contract with a water mod (0.5.0-pre.2; docs/mid-distance-view.md, "Far water and Sea"). Wmap declares
 // these and does the shading; a water mod sets them whenever the game uses a program that has them (Sea's Use hook does,
@@ -36,14 +37,91 @@ vec3 hypsometric(float hn)
     return c;
 }
 
-// The game's climate tint for a block this many blocks above sea level: vanilla's altitude adjustments of the
-// stored climate (Climate.GetAdjustedTemperature, Climate.GetRainFall) and its colour-map lookup (colormap.vsh).
-vec3 climateTint(sampler2D map, vec4 biome, float aboveSea)
+// The climate a block this many blocks above sea level reads (temperature and rain bytes): vanilla's altitude adjustments
+// of the stored climate (Climate.GetAdjustedTemperature, Climate.GetRainFall). The bytes are Earth's
+// ClimatePixelForVanillaLapse, stored so that vanilla's adjustments give the real surface temperature and rain.
+vec2 wmapClimateAt(vec4 biome, float aboveSea)
 {
     float temperature = clamp(biome.g * 255.0 - aboveSea / 1.5, 0.0, 255.0);
     float rain = clamp(biome.b * 255.0 + aboveSea / 2.0 + 5.0 * clamp(8.0 - aboveSea, 0.0, 8.0), 0.0, 255.0);
-    vec2 rel = clamp(vec2(temperature, rain) / 255.0, 0.001, 0.999);
+    return vec2(temperature, rain);
+}
+
+// How much this world's own climate cools a block this many blocks above sea (climate-byte units; 0.5.3-rc.14, WM-0022): the
+// client's Climate.GetAdjustedTemperature (Core/GrassSeasons.AltitudeRow, row 10 of the season strip), which Earth patches
+// with the real lapse on its vertical scale; vanilla's 1 byte per 1.5 blocks without the strip or Earth.
+float wmapCooling(float aboveSea)
+{
+    if (wmapSeason.z < 0.5) return aboveSea / 1.5;
+    float c = clamp((aboveSea + 64.0) / max(wmapHeightScale + 64.0, 1.0) * 127.0, 0.0, 127.0);
+    int c0 = int(floor(c)), c1 = min(c0 + 1, 127);
+    vec4 a = texelFetch(wmapGrassSeasons, ivec2(c0, 10), 0) * 255.0, b = texelFetch(wmapGrassSeasons, ivec2(c1, 10), 0) * 255.0;
+    float at = (floor(a.r + 0.5) * 256.0 + floor(a.g + 0.5)) / 128.0 - 128.0, bt = (floor(b.r + 0.5) * 256.0 + floor(b.g + 0.5)) / 128.0 - 128.0;
+    return mix(at, bt, c - float(c0));
+}
+
+// The temperature byte the game's season weight reads at a block (colormap.vsh's x): the block's temperature with this
+// world's cooling taken back, the sea-level temperature where Earth's real lapse applies (Earth's rewrite of colormap.vsh).
+// The stored byte (vanilla's cooling taken back) is far warmer on high ground in tall worlds: at 1:10 the Engadin's floor
+// (181 blocks up) read 209 against the game's 137, a weight of 0 against 0.89, and its July meadows took the cold climate
+// tint alone, tundra-yellow beside the green real chunks (0.5.3-rc.13 and before).
+float wmapWeightTemperature(vec4 biome, float aboveSea) { return wmapClimateAt(biome, aboveSea).x + wmapCooling(aboveSea); }
+
+// A climate colour map at those bytes (colormap.vsh's lookup).
+vec3 wmapClimateLookup(sampler2D map, vec2 climate)
+{
+    vec2 rel = clamp(climate / 255.0, 0.001, 0.999);
     return texture(map, (4.0 + rel * 256.0) / 264.0).rgb;
+}
+
+// The game's climate tint for a block this many blocks above sea level.
+vec3 climateTint(sampler2D map, vec4 biome, float aboveSea) { return wmapClimateLookup(map, wmapClimateAt(biome, aboveSea)); }
+
+// How much the season map tints a plant against the climate map (colormap.vsh, maps without the tropical flag): x is the
+// temperature byte at the block plus its altitude cooling taken back, which is the stored byte. About 0.9 in temperate
+// lands, less toward the poles and the tropics, near none on hot or high ground.
+float wmapSeasonWeight(float x)
+{
+    return clamp(0.5 - cos(x / 42.0) / 2.3 + max(0.0, 128.0 - x) / 512.0 - max(0.0, x - 130.0) / 200.0, 0.0, 1.0);
+}
+
+// A season map's row at a time of year (Core/GrassSeasons.cs).
+vec3 wmapSeasonRow(float row, float rel) { return texture(wmapGrassSeasons, vec2(clamp(rel, 0.0, 1.0), (row + 0.5) / 11.0)).rgb; }
+
+// The grass season map a place follows (wmapSeasonAt): Earth's maps by their growing season (1, 0.80, 0.66, 0.52, 0.38 of
+// the year), its summer-dry and steppe maps, or the game's own map where Earth gives none.
+vec3 wmapGrassSeason(vec4 season, float rel)
+{
+    float share = season.r;
+    float p = clamp(share >= 0.8 ? (1.0 - share) / 0.2 : 1.0 + (0.8 - share) / 0.14, 0.0, 4.0);
+    float p0 = min(floor(p), 3.0);
+    vec3 temperate = mix(wmapSeasonRow(p0, rel), wmapSeasonRow(p0 + 1.0, rel), p - p0);
+    vec3 dry = mix(wmapSeasonRow(6.0, rel), wmapSeasonRow(5.0, rel), smoothstep(0.66, 1.0, share));
+    return mix(wmapSeasonRow(7.0, rel), mix(temperate, dry, season.g), smoothstep(0.2, 0.38, share));
+}
+
+// Earth's grass rainfall at a time of year (its GrassSeason.SeasonalRain): the yearly rainfall's aridity index (its
+// SoilFertility curve) scaled by exp(wet), the place's wetness then against its yearly mean.
+const float wmapAridRain[10] = float[10](0.0, 15.0, 50.0, 95.0, 115.0, 130.0, 150.0, 170.0, 200.0, 235.0);
+const float wmapAridLog[10] = float[10](-4.60517, -2.995732, -1.609438, -0.693147, -0.287682, 0.0, 0.405465, 0.693147, 1.098612, 1.609438);
+float wmapSeasonalRain(float rain, float wet)
+{
+    if (rain <= 0.0 || abs(wet) < 1e-3) return rain;
+    float la = wmapAridLog[9];
+    for (int i = 1; i < 10; i++)
+        if (rain <= wmapAridRain[i]) { la = mix(wmapAridLog[i - 1], wmapAridLog[i], (rain - wmapAridRain[i - 1]) / (wmapAridRain[i] - wmapAridRain[i - 1])); break; }
+    la += clamp(wet, -2.0, 2.0);
+    if (la <= wmapAridLog[0]) return 0.0;
+    for (int i = 1; i < 10; i++)
+        if (la <= wmapAridLog[i]) return mix(wmapAridRain[i - 1], wmapAridRain[i], (la - wmapAridLog[i - 1]) / (wmapAridLog[i] - wmapAridLog[i - 1]));
+    return wmapAridRain[9];
+}
+
+// The place's wetness against its yearly mean now (the season's B and A: its yearly wave over the calendar's year).
+float wmapWetness(vec4 season)
+{
+    float a = (season.b * 255.0 - 128.0) / 63.5, b = (season.a * 255.0 - 128.0) / 63.5, t = 6.2831853 * wmapSeason.y;
+    return a * cos(t) + b * sin(t);
 }
 
 // The climate's water tint at a point (the game's watertint map at the sea surface), a temperate sea's where the climate is
@@ -127,18 +205,56 @@ vec3 wmapSeaGlints(vec3 c, vec3 ray, float glint, float rough)
     return mix(c, vec3(0.62, 0.72, 0.90), moon);
 }
 
-// Land this many blocks above the sea under this biome (R forest).
-vec3 wmapLandAlbedo(float height, vec4 biome)
+// The stored climate's mean temperature in C this many blocks above the sea: the byte less vanilla's 1 C per 6.375 blocks
+// (Climate.GetAdjustedTemperature; Earth stores it so that this is its own temperature at the sample's height).
+float wmapTemperature(vec4 biome, float aboveSea) { return (biome.g * 255.0 - aboveSea / 1.5) / 4.25 - 20.0; }
+
+// Land this many blocks above the sea under this biome (R forest) and grass season (wmapSeasonAt).
+vec3 wmapLandAlbedo(float height, vec4 biome, vec4 season)
 {
     float hn = height / wmapHeightScale;
     vec3 albedo = hypsometric(hn) * 0.85;
     if (wmapTint.x > 0.5 && biome.a > 0.0)
     {
-        // Grass and leaves: grey textures (about 0.6 and 0.55) tinted by climate; canopies are darker in their own shade.
-        vec3 plant = climateTint(wmapPlantTint, biome, height - 1.0);
-        vec3 green = mix(plant * 0.60, plant * 0.40, biome.r);
-        // Rock and snow above the green, as the atlas draws them.
-        green = mix(green, albedo, smoothstep(0.45, 0.70, hn));
+        vec2 climate = wmapClimateAt(biome, height - 1.0);
+        vec3 green;
+        if (wmapSeason.z > 0.5)
+        {
+            // As the game colours them (0.5.3-rc.5; WM-0022): the grass texture (grasscoverage/normal-top, about 0.60 0.60
+            // 0.50) times the climate map at the grass's rainfall now, mixed with its season map by the season weight; leaves
+            // (about 0.55 grey) the same with the oak's and the needles' season maps and the yearly rainfall. Until rc.4 the
+            // climate map alone tinted both: the season map, which carries about nine tenths of the colour in temperate lands,
+            // was missing, and cool or dry lands came out olive to yellow where the game draws them green.
+            float weight = wmapSeasonWeight(wmapWeightTemperature(biome, height - 1.0));
+            vec3 grassClimate = wmapClimateLookup(wmapPlantTint, vec2(climate.x, wmapSeasonalRain(climate.y, wmapWetness(season))));
+            vec3 grass = vec3(0.596, 0.603, 0.497) * mix(grassClimate, wmapGrassSeason(season, wmapSeason.x), weight);
+            // Needles where it is cold, broad leaves where it is warm, until Earth gives the forest's make-up (EA-0071).
+            float conifer = mix(0.85, 0.25, smoothstep(-2.0, 14.0, wmapTemperature(biome, height)));
+            vec3 leafSeason = mix(wmapSeasonRow(8.0, wmapSeason.x), wmapSeasonRow(9.0, wmapSeason.x), conifer);
+            // (0.5.3-rc.6: 0.66; rc.5's 0.55 drew far and recorded forest about a fifth darker than the real forest beside it.)
+            vec3 leaves = 0.66 * mix(wmapClimateLookup(wmapPlantTint, climate), leafSeason, weight);
+            green = mix(grass, leaves, biome.r);
+        }
+        else
+        {
+            // Without the season maps: grey textures (about 0.6 and 0.55) tinted by climate; canopies darker in their shade.
+            vec3 plant = wmapClimateLookup(wmapPlantTint, climate);
+            green = mix(plant * 0.60, plant * 0.40, biome.r);
+        }
+        // Bare ground and snow by the climate on high ground (0.5.3-rc.4). Until then the atlas's height palette took over
+        // above about 1,200 m whatever the climate: the Ethiopian highlands tan, alpine meadows grey, Tibet half white all
+        // year. Now high ground turns to scree and rock where it is cold (a mean year below about 2 C, all of it below
+        // -4 C: Tibet's plateau, the Alps above about 3,000 m) and white only where it is very cold (below about -10 C:
+        // the Himalaya's summits). Both need height as well, so cold lowlands (Siberia's taiga and tundra) stay green; the
+        // game's own rule goes by the warmest month (Earth's MountainEcology), which the climate tiles do not carry yet.
+        // Glaciers come from the chart's ice, as before.
+        float t = wmapTemperature(biome, height);
+        // (0.5.3-rc.5: bare from a mean below -5 C, all of it below -10 C; rc.4's -4 to 2 C turned Tibet's grass, which the
+        // game draws yellow in summer, to orange-brown scree.)
+        float bare = (1.0 - smoothstep(-10.0, -5.0, t)) * smoothstep(0.25, 0.45, hn);
+        float snow = (1.0 - smoothstep(-16.0, -10.0, t)) * smoothstep(0.45, 0.60, hn);
+        green = mix(green, vec3(0.47, 0.44, 0.40), 0.85 * bare);
+        green = mix(green, vec3(0.94, 0.96, 0.98), snow);
         albedo = mix(albedo, green, biome.a);
     }
     return albedo;

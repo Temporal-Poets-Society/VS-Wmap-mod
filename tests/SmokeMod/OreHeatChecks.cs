@@ -55,6 +55,13 @@ static class OreHeatChecks
             bool earth = api.ModLoader.IsModEnabled("earthmap") || api.ModLoader.IsModEnabled("earth");
             if (earth && method != OreHeatRequest.Reading) throw new Exception($"Earth world answered by {method}, not the generators' own readings");
             bool reading = method == OreHeatRequest.Reading;
+            // A cell may wait for its chunk where Earth keeps vanilla strata and that chunk is not loaded (WM-D51, WM-0011): the
+            // server's own Column says which. Every other cell on the world has an answer.
+            var hidden = BindingFlags.Instance | BindingFlags.NonPublic;
+            var columnOf = typeof(OreHeatServer).GetMethod("Column", hidden);
+            var samplerOf = ((System.Func<System.Func<double, double, MapSample>>)typeof(OreHeatServer).GetField("samplers", hidden)?.GetValue(heat))?.Invoke();
+            int seaLevel = api.World.SeaLevel, worldHeight = api.WorldManager.MapSizeY;
+            bool Waits(double x, double z) => columnOf?.Invoke(heat, new object[] { x, z, seaLevel, worldHeight, true, samplerOf }) is ITuple c && c[3] is true;
 
             var at = locate?.Invoke(51.2, 7.9) ?? (t.StartX + t.Width / 2, t.Height / 2);
             // Vanilla's ore maps answer only in loaded regions: look where a chunk is loaded.
@@ -70,7 +77,7 @@ static class OreHeatChecks
             var watch = Stopwatch.StartNew();
             var one = heat.Serve(code, fine, fx, fz);
             long fineMs = watch.ElapsedMilliseconds;
-            Check(t, one, reading, "chunk cells " + code);
+            Check(t, one, reading, "chunk cells " + code, Waits);
             if (!reading && api.WorldManager.AllLoadedMapchunks.Count > 0 && one.Blocks.All(float.IsNaN)) throw new Exception("no answer around a loaded chunk");
             int files = Directory.GetFiles(folder, "o-*.wmt").Length;
             if (reading && (one.Partial || files != 1 || one.Millis <= 0)) throw new Exception($"complete tile not stored ({files} files, partial {one.Partial}, {one.Millis} ms)");
@@ -109,7 +116,7 @@ static class OreHeatChecks
             watch.Restart();
             var world = heat.Serve(OreHeat.Listed, top, 0, 0);
             long worldMs = watch.ElapsedMilliseconds;
-            Check(t, world, reading, "world listed");
+            Check(t, world, reading, "world listed", Waits);
             if (world.Blocks.Any(b => !float.IsNaN(b) && (b < 0 || b > codes.Length || b != MathF.Round(b)))) throw new Exception("listed counts are not whole ore counts");
             if (heat.Serve("no-such-ore", fine, fx, fz).Error == null || heat.Serve(code, top + 1, 0, 0).Error == null) throw new Exception("an unknown ore or tile was answered");
 
@@ -145,9 +152,12 @@ static class OreHeatChecks
             {
                 // The first request started storing the coarse levels.
                 wait.Restart();
-                while (wait.ElapsedMilliseconds < 20000 && heat.StoredAhead.Done < 2) System.Threading.Thread.Sleep(100);
+                // Up to three minutes (0.5.3-rc.13): on Earth 2.0 a coarse tile of every ore takes many seconds (its ground
+                // columns), and 20 s, enough on Earth 1.x, saw one tile done.
+                while (wait.ElapsedMilliseconds < 180000 && heat.StoredAhead.Done < 2) System.Threading.Thread.Sleep(100);
                 var (doneAhead, of) = heat.StoredAhead;
-                if (of != OreHeat.StoreAheadKeys(t, OreHeatServer.StoreAheadTiles).Count || doneAhead < 2) throw new Exception($"store-ahead not running ({doneAhead} of {of})");
+                if (of != OreHeat.StoreAheadKeys(t, OreHeatServer.StoreAheadTiles).Count || doneAhead < 2)
+                    throw new Exception($"store-ahead not running ({doneAhead} of {of} after {wait.ElapsedMilliseconds / 1000.0:0} s; a tile of chunk cells took {fineMs} ms, the whole world {worldMs} ms)");
                 ahead = $"; store-ahead {doneAhead} of {of} coarse tiles after {wait.ElapsedMilliseconds / 1000.0:0.0} s";
             }
             return $"Ore heat maps: PASS ({codes.Length} ores by {method}; {code} over a tile of chunk cells in {fineMs} ms, stored and read back in {diskMs} ms; " +
@@ -176,7 +186,7 @@ static class OreHeatChecks
         a.Blocks.Select(BitConverter.SingleToInt32Bits).SequenceEqual(b.Blocks.Select(BitConverter.SingleToInt32Bits))
         && a.Factors.Select(BitConverter.SingleToInt32Bits).SequenceEqual(b.Factors.Select(BitConverter.SingleToInt32Bits));
 
-    static void Check(Topology t, OreHeatResponse r, bool everywhere, string what)
+    static void Check(Topology t, OreHeatResponse r, bool everywhere, string what, System.Func<double, double, bool> waits = null)
     {
         if (r == null || r.Error != null) throw new Exception($"{what}: {r?.Error ?? "no answer"}");
         if (r.Blocks?.Length != OreHeat.TileCount || r.Factors?.Length != OreHeat.TileCount) throw new Exception($"{what}: {r.Blocks?.Length} values for {OreHeat.TileCount} cells");
@@ -185,10 +195,11 @@ static class OreHeatChecks
         for (int row = 0; row < OreHeat.TileCells; row++)
             for (int column = 0; column < OreHeat.TileCells; column++)
             {
-                bool outside = double.IsNaN(OreHeat.Sample(t, r.Level, r.X, r.Z, column, row).X);
+                var (sx, sz) = OreHeat.Sample(t, r.Level, r.X, r.Z, column, row);
+                bool outside = double.IsNaN(sx);
                 float b = r.Blocks[row * OreHeat.TileCells + column];
                 if (outside) { off++; if (!float.IsNaN(b)) throw new Exception($"{what}: an answer off the world"); }
-                else if (float.IsNaN(b)) nan++;
+                else if (float.IsNaN(b) && (waits == null || !waits(t.Canonical(sx), sz))) nan++;
             }
         if (everywhere && nan > 0) throw new Exception($"{what}: {nan} of {OreHeat.TileCount - off} cells on the world without an answer");
         if (r.Blocks.Any(b => b < 0 || float.IsInfinity(b)) || r.Factors.Any(f => f < 0 || float.IsInfinity(f))) throw new Exception($"{what}: negative or infinite values");

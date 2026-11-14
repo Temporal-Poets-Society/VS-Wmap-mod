@@ -37,7 +37,7 @@ The detail setting picks ring 0's cell size; each ring holds 64 cells from its i
 | 1 normal (default) | 32 / 2048 | 64 / 4096 | 128 / 8192 | 256 / 16384 | |
 | 2 high | 16 / 1024 | 32 / 2048 | 64 / 4096 | 128 / 8192 | 256 / 16384 |
 
-Rings beyond the chosen distance are not built. The world chart has about 25 blocks per texel on a 204,800-block ring (62 on a 510,976-block ring), so cells finer than that only interpolate; "high" mainly helps smaller worlds and makes the first kilometre smoother.
+Rings beyond the chosen distance are not built. The world chart has the ring's length / 8192 blocks per texel: about 25 on a 204,800-block ring (Earth at 1:200), 49 on Earth 2.0's default 1:100 ring (400,384 blocks) and 489 at 1:10 (WM-0024), so cells finer than that only interpolate; "high" mainly helps smaller worlds and makes the first kilometre smoother.
 
 ## Data source and transfer
 
@@ -56,7 +56,7 @@ At the default (8192 blocks, normal detail): 3 rings, about 42,000 vertices and 
 
 - **Raising the far plane** reduces depth precision: at 0.1 near plane and 24-bit depth, depth steps are about 1.3 blocks at 1.5 km and 40 blocks at 8 km. Real chunks are unaffected in practice; distant ridges may flicker against each other at 12–16 km, where they are mostly haze. Other mods that read `zFar` (SSAO-like effects) see the larger value, as with Farseer.
 - **Farseer installed too**: both would draw far terrain. Wmap detects Farseer and stays off, with a log line.
-- **Coarse heights near the boundary**: 25-block texels smooth cliffs and narrow valleys; a coarse hill may rise slightly above a real valley at the boundary. The push-down and the sky blend hide most of it.
+- **Coarse heights near the boundary**: chart texels (25 to 489 blocks by the world's scale) smooth cliffs and narrow valleys; a coarse hill may rise slightly above a real valley at the boundary. The push-down and the sky blend hide most of it.
 - **Lakes** sit at their bed height (the chart stores the bed, not the lake surface), so high lakes look slightly sunk.
 - **The game's shader includes** are used for sky colour and fog. If a future game version renames them, the far-terrain shader fails to compile; Wmap logs it and leaves far terrain off, the atlas is unaffected.
 - **Heights above 256 blocks over sea** are clamped by the chart's encoding.
@@ -68,3 +68,11 @@ As designed above, in `src/Core/FarMesh.cs` (layout), `src/Client/FarTerrainDraw
 Since 0.4.0 the near band and climate tiles extend this: see [far-terrain-near-band.md](far-terrain-near-band.md#implemented-040).
 
 When the camera crosses Cylinder World's jump line, the mesh keeps its world grid only if the ring circumference is a multiple of the coarsest cell (256 blocks by default; true for the standard 204,800-block ring); otherwise the far terrain shifts slightly once at the teleport.
+
+## Since 0.5.3 (WM-D54 to WM-D61)
+
+The first steps of the [far view plan](../../overview/proposals/2026-11-13-world-map-far-view-plan.md) (suite D70: World Map is the suite's only far terrain). Far land is lit with the game's own numbers for its chunks: the face's shade from the game's light with chunkopaque.vsh's floor, the shadow map's strength and clear-day boost (`shadowIntensity`), and full sunlight at the world's sun-light level (0.866 in vanilla); before, far land was about 6 % too dark on clear days with shadows on and up to 15 % too bright under cloud. In the near band each pixel's slope comes from the band's four-block heights with the forest canopy, so relief between the mesh's vertices and forest edges are shaded. Where Earth's climate is known, high ground is coloured by its climate (scree, rock, snow) instead of the atlas's height palette. Recorded forests stand at the canopy height the recorder saw (see [mid-distance-view.md](mid-distance-view.md)). `.wmap fardebug albedo|lit|off` shows the colour alone or lit without haze, to compare with the game's ground on screen.
+
+0.5.3 (WM-D55): far grass and leaves are coloured as the game colours them: the climate map, the season map at the game's `seasonRel` and colormap.vsh's weight between them, with each place's grass season map and wet season from Earth (`GrassSeasonAt`; biome tiles format 102 carry them below the biome). From 0.8 of the view distance far terrain takes the depth of the point at 0.8 along its ray and so covers the game's blocks where the game fades them into the sky (out to 0.95); nearer than that it draws only over columns not loaded, its push-down is gone by 0.8, and land haze starts at none.
+
+0.5.3 (WM-D56): far terrain is drawn in three passes before the game's chunks: depth only; colour where that left the surface nearest (no depth writes); the distant lights; then the cover, the depth of the point at 0.8 of the view distance along every ray to far land past it and below the clouds' underside. The game's blocks from there on lie behind it at any distance. Grassy soil is recorded as the game draws its top.

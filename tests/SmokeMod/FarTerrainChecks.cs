@@ -329,7 +329,8 @@ public static class FarTerrainChecks
                     }
                     var byPosition = new Dictionary<(float, float), List<int>>();
                     for (int i = 0; i < bandMesh.VertexCount; i++) { var key = (verts[i * 4], verts[i * 4 + 1]); if (!byPosition.TryGetValue(key, out var list)) byPosition[key] = list = new(); list.Add(i); }
-                    // Every vertex shared by two rings agrees, and every stitched vertex lies on its coarse edge.
+                    // Every vertex shared by two rings agrees, and every stitched vertex sits on its coarse edge's end below it
+                    // (collapsed there: no T-junction, WM-0028).
                     (int Stitched, double Worst) Stitches(float[] y, string where)
                     {
                         int stitched = 0; double worst = 0;
@@ -343,7 +344,7 @@ public static class FarTerrainChecks
                             }
                             if (!byPosition.TryGetValue((vx - sx, vz - sz), out var a) || !byPosition.TryGetValue((vx + sx, vz + sz), out var b)) throw new Exception("Near band: a stitched vertex has no coarse edge ends");
                             int ea = a.First(v => verts[v * 4 + 2] == 0 && verts[v * 4 + 3] == 0), eb = b.First(v => verts[v * 4 + 2] == 0 && verts[v * 4 + 3] == 0);
-                            worst = Math.Max(worst, Math.Abs(y[i] - 0.5 * (y[ea] + y[eb])));
+                            worst = Math.Max(worst, Math.Abs(y[i] - y[ea]));
                             stitched++;
                         }
                         if (worst > 2e-3 * Math.Max(1, Math.Abs(frame.CameraY - info.SeaLevel) / 100)) throw new Exception($"Near band {where}: ring edges crack by {worst:0.0000} blocks");
@@ -365,6 +366,28 @@ public static class FarTerrainChecks
                         double e = g * (255 / 127.5) - 1;
                         return Math.Max(0, Math.Sign(e) * e * e * info.ChartHeightRange);
                     }
+                    // The same four-block grid from exact heights (0.5.3-rc.13, WM-0014): the error the band's sampling makes on this
+                    // terrain whatever it stores, without the tiles' whole-block rounding and 8-bit code. On GLO-90's relief at Nice
+                    // that alone is about 1.2 blocks at the median (Earth 2.0; 0.33 on the old built-in heights), so the fixed
+                    // 1.0-block limit of 0.4.0 failed a band that was as good as its grid.
+                    double BandGroundExact(double wx, double wz)
+                    {
+                        var window = new FarTileWindow(topo, FarTiles.BandLevel);
+                        double rel = topo.Canonical(wx) - topo.StartX;
+                        window.TileX(rel, out _, out int index, out double inside); window.TileZ(wz, out int j, out double insideZ);
+                        var key = new TileKey(0, FarTiles.BandLevel, index, j);
+                        double tx = window.Texel(inside) - 0.5, tz = window.Texel(insideZ) - 0.5;
+                        int x0 = (int)Math.Floor(tx), z0 = (int)Math.Floor(tz); double fx = tx - x0, fz = tz - z0;
+                        // Texel x of a tile samples (x - 0.5) steps from its corner (SemanticTile.Sample, past its margin).
+                        double H(int x, int z)
+                        {
+                            double sx = topo.StartX + key.X * key.Span + (x - 0.5) * key.Step, sz = key.Z * key.Span + (z - 0.5) * key.Step;
+                            var m = src(topo.Canonical(sx), sz);
+                            return Semantic.RelativeHeight(m.Height, m.Depth, m.Kind, info.SeaLevel);
+                        }
+                        double e = (1 - fx) * (1 - fz) * H(x0, z0) + fx * (1 - fz) * H(x0 + 1, z0) + (1 - fx) * fz * H(x0, z0 + 1) + fx * fz * H(x0 + 1, z0 + 1);
+                        return Math.Max(0, e);
+                    }
                     double Truth(double wx, double wz)
                     {
                         var m = src(topo.Canonical(wx), wz);
@@ -379,12 +402,12 @@ public static class FarTerrainChecks
                         double dx = verts[i * 4] + ox - x, dz = verts[i * 4 + 1] + oz - z, d = Math.Sqrt(dx * dx + dz * dz);
                         return d > start + 520 && d < 1200 - 20;
                     });
-                    (double Worst, int Count, double[] BandErrors, double[] ChartErrors) Oracle(double x, double z, double eyeY, string where)
+                    (double Worst, int Count, double[] BandErrors, double[] ChartErrors, double[] GridErrors, double[] Signed) Oracle(double x, double z, double eyeY, string where)
                     {
                         frame.Canopy = 0;
                         var y = Capture(x, z, eyeY);
                         var (ox, oz) = FarTerrainDraw.Origin(bandMesh, x, z);
-                        double worst = 0; var bandErrors = new List<double>();
+                        double worst = 0; var bandErrors = new List<double>(); var gridErrors = new List<double>(); var signed = new List<double>();
                         var core = Core(x, z).ToList();
                         var landCore = new List<int>();
                         foreach (int i in core)
@@ -393,7 +416,11 @@ public static class FarTerrainChecks
                             double expected = BandGround(wx, wz), truth = Truth(wx, wz);
                             worst = Math.Max(worst, Math.Abs(ground - expected) / (0.05 + 0.002 * expected));
                             // Accuracy on land only: the flat sea is exact for both and would hide the difference.
-                            if (truth > 1) { bandErrors.Add(Math.Abs(ground - truth)); landCore.Add(i); }
+                            if (truth > 1)
+                            {
+                                bandErrors.Add(Math.Abs(ground - truth)); signed.Add(ground - truth); landCore.Add(i);
+                                gridErrors.Add(Math.Abs(BandGroundExact(wx, wz) - truth));
+                            }
                         }
                         if (worst > 1) throw new Exception($"Near band {where}: heights differ from the band tiles (worst {worst:0.00} of the tolerance)");
                         // The same vertices drawn from the chart alone.
@@ -402,7 +429,7 @@ public static class FarTerrainChecks
                         frame.Tiles = tiles;
                         var chartErrors = landCore.Select(i => Math.Abs(chartY[i] + eyeY - surface - Truth(verts[i * 4] + ox, verts[i * 4 + 1] + oz))).ToArray();
                         frame.Canopy = 8;
-                        return (worst, core.Count, bandErrors.ToArray(), chartErrors);
+                        return (worst, core.Count, bandErrors.ToArray(), chartErrors, gridErrors.ToArray(), signed.ToArray());
                     }
                     static double Pct(double[] v, double p) { var s = v.OrderBy(a => a).ToArray(); return s.Length == 0 ? 0 : s[Math.Min(s.Length - 1, (int)(p * s.Length))]; }
 
@@ -413,18 +440,24 @@ public static class FarTerrainChecks
                     var (stitched, crack) = Stitches(Capture(nice.X, nice.Z, eyeY), "at Nice");
                     var o = Oracle(nice.X, nice.Z, eyeY, "at Nice");
                     double bandMedian = Pct(o.BandErrors, 0.5), band95 = Pct(o.BandErrors, 0.95), chartMedian = Pct(o.ChartErrors, 0.5), chart95 = Pct(o.ChartErrors, 0.95);
+                    double gridMedian = Pct(o.GridErrors, 0.5), grid95 = Pct(o.GridErrors, 0.95), bias = o.Signed.Length == 0 ? 0 : o.Signed.Average();
                     if (o.Count < 1000 || o.BandErrors.Length < 300) throw new Exception($"Near band: only {o.Count} vertices in the band's core, {o.BandErrors.Length} on land");
-                    if (bandMedian > 1.0 || band95 > chart95 / 2 || bandMedian > chartMedian / 2)
+                    if (band95 > chart95 / 2 || bandMedian > chartMedian / 2)
                         throw new Exception($"Near band: not closer to Earth's terrain than the chart (median {bandMedian:0.0} vs {chartMedian:0.0}, 95% {band95:0.0} vs {chart95:0.0} blocks)");
+                    // As close as its four-block grid allows (WM-0014): within a quarter block of the grid's own error at the median
+                    // and a block at the 95th percentile, and no offset (a half-block rounding, a shifted sample or another column
+                    // method shows as a mean error that the medians of absolute errors hide).
+                    if (bandMedian > gridMedian + 0.25 || band95 > grid95 + 1.0 || Math.Abs(bias) > 0.3)
+                        throw new Exception($"Near band: farther from Earth's terrain than its grid allows (median {bandMedian:0.00} vs the grid's {gridMedian:0.00}, 95% {band95:0.0} vs {grid95:0.0}, mean {bias:+0.00;-0.00} blocks)");
 
                     // Continuity as tiles arrive: a weight just above zero changes heights (canopy) only a little.
                     frame.Canopy = 8;
                     double Jump(FarTiles.Layer layer)
                     {
-                        var saved = (float[])layer.SlotFade.Clone();
-                        Array.Fill(layer.SlotFade, 0f); var off = Capture(nice.X, nice.Z, eyeY);
-                        Array.Fill(layer.SlotFade, 1e-4f); var on = Capture(nice.X, nice.Z, eyeY);
-                        Array.Copy(saved, layer.SlotFade, saved.Length);
+                        var saved = (float[])layer.Slots.Fade.Clone();
+                        Array.Fill(layer.Slots.Fade, 0f); var off = Capture(nice.X, nice.Z, eyeY);
+                        Array.Fill(layer.Slots.Fade, 1e-4f); var on = Capture(nice.X, nice.Z, eyeY);
+                        Array.Copy(saved, layer.Slots.Fade, saved.Length);
                         return Enumerable.Range(0, off.Length).Max(i => Math.Abs(on[i] - off[i]));
                     }
                     double climateJump = Jump(tiles.Climate), bandJump = Jump(tiles.Band);
@@ -474,7 +507,20 @@ public static class FarTerrainChecks
                             }
                             return floor;
                         }
-                        int seaPixels = 0, climbing = 0, riverPixels = 0, hanging = 0; double highest = 0, riverHighest = 0, hangingWorst = 0;
+                        // The highest water surface Earth has within a texel (0.5.3-rc.13): a lake above the sea is drawn at its own
+                        // surface, so water there is not the far sea climbing the coast (Earth 2.0's lakes by Nice, 3.3 blocks up).
+                        double WaterAbove(double wx, double wz)
+                        {
+                            double best = 0; int reach = (int)Math.Ceiling(texel);
+                            for (int dx = -reach; dx <= reach; dx += 2)
+                            for (int dz = -reach; dz <= reach; dz += 2)
+                            {
+                                var m = src(topo.Canonical(wx + dx), wz + dz);
+                                if (Semantic.IsWater(m.Kind)) best = Math.Max(best, m.Height - seaSurface);
+                            }
+                            return best;
+                        }
+                        int seaPixels = 0, climbing = 0, riverPixels = 0, hanging = 0, lakePixels = 0; double highest = 0, riverHighest = 0, hangingWorst = 0;
                         for (int py = 0; py < H; py++)
                         for (int px = 0; px < W; px++)
                         {
@@ -494,12 +540,14 @@ public static class FarTerrainChecks
                                 continue;
                             }
                             seaPixels++;
-                            highest = Math.Max(highest, above);
-                            if (above > 3) climbing++;
+                            double overWater = above;
+                            if (above > 3) { double lake = WaterAbove(wx, wz); if (lake > 1) { lakePixels++; overWater = above - lake; } }
+                            highest = Math.Max(highest, overWater);
+                            if (overWater > 3) climbing++;
                         }
                         if (seaPixels < 1000) throw new Exception($"Near band: the coast view shows only {seaPixels} sea pixels");
                         if (climbing > 0 || hanging > 0)
-                            throw new Exception($"Near band: water drawn above its level: the far sea climbs the coast in {climbing} of {seaPixels} sea pixels " +
+                            throw new Exception($"Near band: water drawn above its level: the far sea climbs the coast in {climbing} of {seaPixels} water pixels ({lakePixels} by a lake) " +
                                 $"(more than 3 blocks above the sea, up to {highest:0.0}); river lines hang above their valleys in {hanging} of {riverPixels} " +
                                 $"pixels more than 3 blocks up (more than 6 blocks above the valley floor, up to {hangingWorst:0.0})");
                         shore = $"far sea stays at the sea: {seaPixels} sea pixels, the highest {highest:0.0} blocks above it; {riverPixels} river-line pixels more than 3 blocks up, at most {riverHighest:0.0} blocks above the valley floor";
@@ -608,10 +656,10 @@ public static class FarTerrainChecks
                             // Every tile half faded in: readiness dips toward each tile edge alike, so the step in height across
                             // the partial tile's east edge (the seam) must be like the step across an ordinary tile edge.
                             var (ox, oz) = FarTerrainDraw.Origin(bandMesh, px, pz);
-                            var savedFade = (float[])tiles.Band.SlotFade.Clone();
-                            Array.Fill(tiles.Band.SlotFade, 0.5f);
+                            var savedFade = (float[])tiles.Band.Slots.Fade.Clone();
+                            Array.Fill(tiles.Band.Slots.Fade, 0.5f);
                             var y = Capture(px, pz, info.SeaLevel + 40);
-                            Array.Copy(savedFade, tiles.Band.SlotFade, savedFade.Length);
+                            Array.Copy(savedFade, tiles.Band.Slots.Fade, savedFade.Length);
                             double StepAcross(double edge)
                             {
                                 double worst = 0; int pairs = 0;
@@ -641,27 +689,27 @@ public static class FarTerrainChecks
                                 bw.TileX(wx - synthetic.StartX, out int id, out _, out _); bw.TileZ(wz, out int row, out _);
                                 id += lapShift;
                                 int slot = FarTileWindow.Slot(id) + FarTileWindow.Slots * FarTileWindow.Slot(row);
-                                if (tiles.Band.SlotKeys[slot * 2] != id || tiles.Band.SlotKeys[slot * 2 + 1] != row) throw new Exception("Near band: probe tile not loaded");
-                                tiles.Band.SlotFade[slot] = value;
+                                if (tiles.Band.Slots.Ids[slot] != id || tiles.Band.Slots.Rows[slot] != row) throw new Exception("Near band: probe tile not loaded");
+                                tiles.Band.Slots.Fade[slot] = value;
                             }
-                            var keptFade = (float[])tiles.Band.SlotFade.Clone();
+                            var keptFade = (float[])tiles.Band.Slots.Fade.Clone();
                             Fade(cornerX + 10, cornerZ - 10, 0f);
                             double corner = Math.Max(Probe(px, pz, (cornerX - 40, cornerZ + 8), (cornerX + 40, cornerZ + 8), "across an edge beside a missing diagonal tile"),
                                                      Probe(px, pz, (cornerX + 8, cornerZ - 40), (cornerX + 8, cornerZ + 40), "across an edge beside a missing diagonal tile"));
-                            Array.Copy(keptFade, tiles.Band.SlotFade, keptFade.Length);
+                            Array.Copy(keptFade, tiles.Band.Slots.Fade, keptFade.Length);
                             Fade(cornerX - 10, cornerZ + 200, 0.3f); Fade(cornerX + 10, cornerZ + 200, 0.8f);
                             double unequal = Probe(px, pz, (cornerX - 40, cornerZ + 200), (cornerX + 40, cornerZ + 200), "between tiles faded to 0.3 and 0.8");
-                            Array.Copy(keptFade, tiles.Band.SlotFade, keptFade.Length);
+                            Array.Copy(keptFade, tiles.Band.Slots.Fade, keptFade.Length);
                             partialPart += $"; quarter-block steps at most {corner:0.00} blocks beside a missing diagonal tile, {unequal:0.00} between unequal fades";
 
                             // Crossing the seam where tiles per lap (21) is not a multiple of 8: resident tiles keep their slots and fades.
                             Fill(synthetic.StartX + 100, pz);
-                            var resident = tiles.Band.SlotTiles.Select((k, i) => (k, i)).Where(p => p.k != null).ToDictionary(p => p.k.Value, p => p.i);
+                            var resident = tiles.Band.Slots.Keys.Select((k, i) => (k, i)).Where(p => p.k != null).ToDictionary(p => p.k.Value, p => p.i);
                             long uploads = tiles.Uploads;
                             double crossX = synthetic.EndX - 100;
                             tiles.Update(crossX, pz, FarTerrainDraw.Origin(bandMesh, crossX, pz).X, start, 64);
-                            int moved = resident.Count(p => tiles.Band.SlotTiles[p.Value] != p.Key || tiles.Band.SlotFade[p.Value] < 1);
-                            if (tiles.OriginLap != -1 || moved > 0) throw new Exception($"Near band: crossing the seam moved or restarted {moved} resident tiles (origin lap {tiles.OriginLap}): " + string.Join(", ", resident.Where(p => tiles.Band.SlotTiles[p.Value] != p.Key || tiles.Band.SlotFade[p.Value] < 1).Select(p => $"{p.Key.X},{p.Key.Z} slot {p.Value} now {tiles.Band.SlotTiles[p.Value]?.X},{tiles.Band.SlotTiles[p.Value]?.Z} fade {tiles.Band.SlotFade[p.Value]:0.00}")));
+                            int moved = resident.Count(p => tiles.Band.Slots.Keys[p.Value] != p.Key || tiles.Band.Slots.Fade[p.Value] < 1);
+                            if (tiles.OriginLap != -1 || moved > 0) throw new Exception($"Near band: crossing the seam moved or restarted {moved} resident tiles (origin lap {tiles.OriginLap}): " + string.Join(", ", resident.Where(p => tiles.Band.Slots.Keys[p.Value] != p.Key || tiles.Band.Slots.Fade[p.Value] < 1).Select(p => $"{p.Key.X},{p.Key.Z} slot {p.Value} now {tiles.Band.Slots.Keys[p.Value]?.X},{tiles.Band.Slots.Keys[p.Value]?.Z} fade {tiles.Band.Slots.Fade[p.Value]:0.00}")));
                             Fill(crossX, pz);
                             var co = Oracle(crossX, pz, info.SeaLevel + 40, "after crossing the seam");
                             partialPart += $"; crossing the seam kept all {resident.Count} resident tiles ({tiles.Uploads - uploads} new uploads), {co.Count} core vertices on the tiles after it";
@@ -697,7 +745,7 @@ public static class FarTerrainChecks
                             var nw = new FarTileWindow(narrow, FarTiles.BandLevel);
                             nw.TileZ(nz, out int row, out _);
                             // The 30-block tile half faded in, the tile west of it at 0.7, the one east of it ready.
-                            void FadeId(int id, float value) { int slot = FarTileWindow.Slot(id) + FarTileWindow.Slots * FarTileWindow.Slot(row); if (tiles.Band.SlotKeys[slot * 2] != id) throw new Exception("Near band: narrow probe tile not loaded"); tiles.Band.SlotFade[slot] = value; }
+                            void FadeId(int id, float value) { int slot = FarTileWindow.Slot(id) + FarTileWindow.Slots * FarTileWindow.Slot(row); if (tiles.Band.Slots.Ids[slot] != id) throw new Exception("Near band: narrow probe tile not loaded"); tiles.Band.Slots.Fade[slot] = value; }
                             FadeId(-1, 0.5f); FadeId(-2, 0.7f);
                             double seam = narrow.StartX;
                             double narrowStep = Probe(nx, nz, (seam - 30 - 60, nz), (seam + 60, nz), "across a 30-block seam tile");
@@ -734,7 +782,7 @@ public static class FarTerrainChecks
                     var bandTimes = timings.ToArray();
                     return $"near band: {bandMesh.Rings} rings, {bandMesh.VertexCount} vertices; tiles {tiles.Band.Ready} band + {tiles.Climate.Ready} climate, sampled in median {Pct(bandTimes, 0.5):0} ms (max {bandTimes.Max():0}); " +
                         $"{stitched} stitched vertices within {crack:0.0000} blocks; {o.Count} core vertices equal their tiles (worst {o.Worst:0.00} of tolerance); " +
-                        $"error against Earth's terrain: band median {bandMedian:0.00}, 95% {band95:0.00} blocks; chart alone median {chartMedian:0.00}, 95% {chart95:0.00}; " +
+                        $"error against Earth's terrain: band median {bandMedian:0.00}, 95% {band95:0.00} blocks (its grid from exact heights {gridMedian:0.00}, {grid95:0.00}; mean {bias:+0.00;-0.00}); chart alone median {chartMedian:0.00}, 95% {chart95:0.00}; " +
                         $"sea G/B tinted {tinted.G / tinted.B:0.00} vs {untinted.G / untinted.B:0.00}; {climateJump:0.0000}/{bandJump:0.0000} blocks at a weight of 0.0001; {shore}; GL state kept; GPU draw {withBand:0.00} ms with the band (same mesh, chart only {chartOnly:0.00} ms; 0.3.10 mesh {before:0.00} ms){seamPart}{partialPart}";
                 }
                 finally

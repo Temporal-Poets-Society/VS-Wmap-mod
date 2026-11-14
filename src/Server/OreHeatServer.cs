@@ -28,10 +28,15 @@ namespace Wmap.Server;
 /// <c>EarthGeology.RegionalRock</c> is 0 at some depth above the rock floor), the pick hands it vanilla's simulated column
 /// and Earth counts the host rock there; so does this map, from its own <see cref="ProPickWorkSpace"/>, where the column's
 /// map chunk is loaded. Elsewhere such a cell is not known yet (no answer, asked again later), never 0 (WM-0011).</item>
-/// <item>Vanilla's disc generators: the region's ore map × the expected blocks of a chunk at full map (their average
-/// deposit volume × tries × the world's deposit rate × height scaling), where the region is loaded. Host rock is not
-/// counted, so this is an upper bound, and the factor is the ore map's (the pick also multiplies by the column's share of
-/// host rock).</item>
+/// <item>Vanilla's disc generators (0.5.3-rc.13, WM-0025): the pick's own question, where the column's map chunk is loaded:
+/// the region's ore map × the share of the deposit's host blocks in the pick's rock column, within the deposit's height
+/// band. The column is our own <see cref="ProPickWorkSpace"/>'s simulated one, adjusted by Earth as Earth adjusts the
+/// pick's (its own rock in its layers, nothing below its rock floor; <c>RockFloorPass.RockFloorReading</c>). The band is
+/// drawn as the generator draws it for the pick, from a random of our own: the generator's own random is world
+/// generation's, reseeded before each deposit it places, and drawing from it here would move ore in chunks being made.
+/// Blocks = factor × the expected blocks of a chunk at full map (their average deposit volume × tries × the world's
+/// deposit rate × height scaling). Until rc.12 the ore map alone, host rock not counted: on Earth's default ores the map
+/// promised ore the pick does not find (gold 0.675 against 0 by Riga). Elsewhere a cell is not known yet.</item>
 /// </list>
 /// The map comes in tiles (<see cref="OreHeat"/>). A tile is worked out for every ore at once — one surface height per
 /// cell, then each ore's reading — and complete tiles are stored in the world's cache folder beside the atlas's tiles, so
@@ -40,7 +45,7 @@ namespace Wmap.Server;
 /// has a map at once. One worker serves players' newest requests a tile at a time, players in turn; answers are sent from
 /// <see cref="Tick"/> on the main thread.
 /// </summary>
-public sealed class OreHeatServer : IDisposable
+public sealed partial class OreHeatServer : IDisposable
 {
     public const string EarthGenerator = "EarthMap.EarthOreGenerator";
     /// <summary>Coarse tiles stored ahead of time at most: whole levels from the top down while they fit.</summary>
@@ -76,24 +81,6 @@ public sealed class OreHeatServer : IDisposable
     Ore[] ores;
     Dictionary<string, int> byCode;
     string fingerprint;
-    // Where Earth keeps vanilla strata (WM-0011): Earth's regional rock at (x, z, depth below top, top), 0 for vanilla's,
-    // and the top of its rock floor; and a prospecting workspace of our own for vanilla's simulated column (one at a time:
-    // its strata and deposit generators keep state between calls).
-    System.Func<double, double, int, int, int> earthRock;
-    System.Func<int, int, int> earthFloor;
-    ProPickWorkSpace pick;
-    readonly object pickGate = new();
-    int pickErrors;
-
-    sealed class Ore
-    {
-        public string Code;
-        public DepositVariant Variant;
-        /// <summary>The generator answers the pick's question without a block column (Earth Map's).</summary>
-        public bool Reading;
-        /// <summary>Vanilla: expected ore blocks per chunk where the ore map is full.</summary>
-        public double BlocksAtFull;
-    }
 
     /// <param name="folder">The world's cache folder (null while unknown: nothing is stored).</param>
     /// <param name="diskMiB">The cache folder's size limit, shared with the atlas's tiles.</param>
@@ -105,81 +92,8 @@ public sealed class OreHeatServer : IDisposable
         this.diskMiB = diskMiB;
     }
 
-    /// <summary>The ore codes there are heat maps of, in the order the pick knows them; empty without deposits. Built on
-    /// first use (main thread), after the world's deposit generators are set up.</summary>
-    public string[] Codes { get { Catalog(); return ores.Select(o => o.Code).ToArray(); } }
-    /// <summary><see cref="OreHeatRequest.Reading"/> when every ore is answered by its generator, <see cref="OreHeatRequest.OreMap"/>
-    /// when by vanilla's ore maps, "mixed" for both; null without ores.</summary>
-    public string Method
-    {
-        get
-        {
-            Catalog();
-            if (ores.Length == 0) return null;
-            int reading = ores.Count(o => o.Reading);
-            return reading == ores.Length ? OreHeatRequest.Reading : reading == 0 ? OreHeatRequest.OreMap : "mixed";
-        }
-    }
     /// <summary>Coarse tiles stored ahead of time so far, and how many there are to store (0 before the first request).</summary>
     public (int Done, int Of) StoredAhead => (Volatile.Read(ref stored), Volatile.Read(ref storedOf));
-
-    void Catalog()
-    {
-        if (ores != null) return;
-        var list = new List<Ore>();
-        try
-        {
-            var deposits = api.ModLoader.GetModSystem<GenDeposits>()?.Deposits;
-            if (deposits != null)
-            {
-                // As the pick: the last variant with an ore map per code, parents before their children.
-                var variants = new Dictionary<string, DepositVariant>();
-                var order = new List<string>();
-                void Add(DepositVariant v)
-                {
-                    if (v?.Code == null || !v.WithOreMap) return;
-                    if (!variants.ContainsKey(v.Code)) order.Add(v.Code);
-                    variants[v.Code] = v;
-                }
-                foreach (var v in deposits)
-                {
-                    Add(v);
-                    if (v?.ChildDeposits != null) foreach (var child in v.ChildDeposits) Add(child);
-                }
-                double rate = DepositRate(), heightScale = api.WorldManager.MapSizeY / 256.0;
-                foreach (string code in order)
-                {
-                    var v = variants[code];
-                    var ore = new Ore { Code = code, Variant = v };
-                    if (v.GeneratorInst?.GetType().FullName == EarthGenerator) ore.Reading = true;
-                    else if (v.GeneratorInst is DiscDepositGenerator disc)
-                        ore.BlocksAtFull = disc.GetAbsAvgQuantity(new LCGRandom(api.World.Seed)) * rate * (v.ScaleWithWorldheight ? heightScale : 1);
-                    else continue;
-                    list.Add(ore);
-                    if (list.Count == OreHeat.MaxOres) break;
-                }
-            }
-        }
-        catch (Exception e) { api.Logger.Warning("[wmap] Ore heat maps unavailable: {0}", e.Message); list.Clear(); }
-        ores = list.ToArray();
-        byCode = new Dictionary<string, int>();
-        for (int i = 0; i < ores.Length; i++) byCode[ores[i].Code] = i;
-        // What a stored tile depends on beyond the cache folder (seed, mods and terrain): the ores, their generators and
-        // amounts, the world's height and the tiles' layout.
-        string catalogue = string.Join(";", ores.Select(o => o.Code + "=" + (o.Reading ? "reading" : o.BlocksAtFull.ToString("R", System.Globalization.CultureInfo.InvariantCulture))
-            + ":" + o.Variant.GeneratorInst?.GetType().FullName + "@" + o.Variant.GeneratorInst?.GetType().Module.ModuleVersionId));
-        EarthStrata();
-        fingerprint = TileCodec.Hash($"wmap-oreheat-v2|{catalogue}|{api.WorldManager.MapSizeY}|{api.World.Seed}|{OreHeat.TileCells}|{typeof(OreHeatServer).Module.ModuleVersionId}")[..16];
-        if (ores.Length > 0) api.Logger.Notification("[wmap] Ore heat maps: {0} ores ({1})", ores.Length, Method);
-    }
-
-    /// <summary>Vanilla multiplies every deposit's tries by deposits.json's chanceMultiplier, which the world's
-    /// globalDepositSpawnRate patches.</summary>
-    double DepositRate()
-    {
-        try { return api.Assets.TryGet(new AssetLocation("game:worldgen/deposits.json"))?.ToObject<Deposits>()?.ChanceMultiplier ?? 1; }
-        catch (Exception) { return 1; }
-    }
 
     /// <summary>A packet from a player (main thread): checked, and kept as their newest request, replacing the tiles of
     /// the one before.</summary>
@@ -311,7 +225,7 @@ public sealed class OreHeatServer : IDisposable
                     Directory.CreateDirectory(dir);
                     var bytes = tile.Pack();
                     TileCodec.WriteAtomic(path, bytes);
-                    AtlasServer.Wrote(dir, bytes.Length, diskMiB);
+                    TileCache.Wrote(dir, bytes.Length, diskMiB);
                 }
                 catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { /* Storing is optional; the tile is still answered. */ }
             }
@@ -360,9 +274,10 @@ public sealed class OreHeatServer : IDisposable
                     continue;
                 }
                 var (pos, top, rock, unknown) = Column(t.Canonical(sx), sz, sea, mapSizeY, heights, sampler);
+                PickCell picked = null;
                 for (int i = 0; i < ores.Length; i++)
                 {
-                    if (Cell(ores[i], pos, top, rock, unknown, regionSize, out double b, out double f)) tile.Set(i, cell, b, f);
+                    if (Cell(ores[i], pos, top, rock, unknown, regionSize, ref picked, out double b, out double f)) tile.Set(i, cell, b, f);
                     else { tile.Set(i, cell, double.NaN, double.NaN); Volatile.Write(ref complete, 0); }
                 }
             }
@@ -381,128 +296,6 @@ public sealed class OreHeatServer : IDisposable
         }
         tile.Complete = complete == 1;
         return tile;
-    }
-
-    /// <summary>A cell's column: its position, surface height (the loaded chunk's, else the terrain's prediction, else sea
-    /// level) and, where generators read rock and Earth keeps vanilla strata there, vanilla's simulated rock column (null
-    /// where Earth's own rock is all there is), or <c>Unknown</c> where that column is needed but its chunk is not loaded.</summary>
-    (BlockPos Pos, int Top, int[] Rock, bool Unknown) Column(double x, double z, int sea, int mapSizeY, bool heights, System.Func<double, double, MapSample> sampler)
-    {
-        var pos = new BlockPos((int)Math.Floor(x), sea, (int)Math.Floor(z), 0);
-        int top = heights ? api.World.BlockAccessor.GetTerrainMapheightAt(pos) : sea;
-        if (top <= 0 && sampler != null) top = sampler(pos.X + 0.5, pos.Z + 0.5).Height;
-        if (top <= 0) top = sea;
-        top = Math.Clamp(top, 1, mapSizeY - 1);
-        if (!heights) return (pos, top, null, false);
-        var rock = VanillaColumn(pos, top, out bool unknown);
-        return (pos, top, rock, unknown);
-    }
-
-    /// <summary>Earth's rock lookups by reflection (WM-D04), once the catalogue is built; none without Earth's geology.</summary>
-    void EarthStrata()
-    {
-        earthRock = null; earthFloor = null;
-        if (!ores.Any(o => o.Reading)) return;
-        try
-        {
-            var geology = api.ModLoader.Systems.FirstOrDefault(s => s.GetType().FullName == "EarthMap.EarthGeology");
-            var regional = geology?.GetType().GetMethod("RegionalRock", BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(double), typeof(double), typeof(int), typeof(int) }, null);
-            if (regional == null || regional.ReturnType != typeof(int)) return;
-            earthRock = (System.Func<double, double, int, int, int>)regional.CreateDelegate(typeof(System.Func<double, double, int, int, int>), geology);
-            var floor = geology.GetType().Assembly.GetType("EarthMap.EarthWorldGen")?.GetMethod("RockFloorTop", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static, null, new[] { typeof(int), typeof(int) }, null);
-            if (floor != null && floor.ReturnType == typeof(int)) earthFloor = (System.Func<int, int, int>)floor.CreateDelegate(typeof(System.Func<int, int, int>));
-        }
-        catch (Exception e) { earthRock = null; earthFloor = null; api.Logger.Warning("[wmap] Ore heat maps: Earth's rock strata could not be read ({0}); columns where Earth keeps vanilla strata may read low", e.Message); }
-    }
-
-    /// <summary>Vanilla's simulated rock column (as the pick makes it) where Earth keeps vanilla strata somewhere above its
-    /// rock floor in this column, else null. <paramref name="unknown"/> where that column is needed but cannot be made:
-    /// its map chunk is not loaded, or the workspace failed.</summary>
-    int[] VanillaColumn(BlockPos pos, int top, out bool unknown)
-    {
-        unknown = false;
-        var rock = earthRock;
-        if (rock == null) return null;
-        bool vanilla = false;
-        try
-        {
-            int floor = earthFloor?.Invoke(pos.X, pos.Z) ?? 0;
-            for (int y = Math.Max(1, floor + 1); y <= top && !vanilla; y++) vanilla = rock(pos.X, pos.Z, top - y, top) <= 0;
-        }
-        catch (Exception e)
-        {
-            if (Interlocked.Increment(ref pickErrors) == 1) api.Logger.Warning("[wmap] Ore heat maps: Earth's rock lookup failed: {0}", e.Message);
-            return null;
-        }
-        if (!vanilla) return null;
-        if (api.WorldManager.GetMapChunk(pos.X / OreHeat.ChunkSize, pos.Z / OreHeat.ChunkSize) == null) { unknown = true; return null; }
-        try
-        {
-            lock (pickGate)
-            {
-                if (disposed) { unknown = true; return null; }
-                if (pick == null) { pick = new ProPickWorkSpace(); pick.OnLoaded(api); }
-                return pick.GetRockColumn(pos.X, pos.Z);
-            }
-        }
-        catch (Exception e)
-        {
-            if (Interlocked.Increment(ref pickErrors) == 1) api.Logger.Warning("[wmap] Ore heat maps: vanilla's rock column could not be made: {0}", e.Message);
-            unknown = true;
-            return null;
-        }
-    }
-
-    /// <summary>One ore at the player's column for <c>/wmapore</c>: this map's answer worked out there now, beside the
-    /// prospecting pick's own reading with its own workspace (main thread). Null where the ore is unknown.</summary>
-    public string Compare(string code, BlockPos at)
-    {
-        Catalog();
-        if (code == null || !byCode.TryGetValue(code, out int index)) return null;
-        var ore = ores[index];
-        int sea = api.World.SeaLevel, mapSizeY = api.WorldManager.MapSizeY, regionSize = api.WorldManager.RegionSize;
-        var (pos, top, rock, unknown) = Column(at.X + 0.5, at.Z + 0.5, sea, mapSizeY, ore.Reading, samplers?.Invoke());
-        string map = Cell(ore, pos, top, rock, unknown, regionSize, out double blocks, out double factor)
-            ? $"map {blocks:0.#} blocks/chunk, factor {factor:0.000}" : "map: not known here";
-        string column = !ore.Reading ? "ore map" : unknown ? "vanilla strata, chunk not loaded" : rock != null ? "vanilla strata, simulated column" : "Earth's rock";
-        string picked;
-        try
-        {
-            var workspace = api.ObjectCache.TryGetValue("propickworkspace", out object o) ? o as ProPickWorkSpace : null;
-            int[] pickColumn = workspace?.GetRockColumn(pos.X, pos.Z);
-            var region = api.World.BlockAccessor.GetMapRegion(pos.X / regionSize, pos.Z / regionSize);
-            int dist = 0;
-            if (region?.OreMaps != null && region.OreMaps.TryGetValue(code, out var oreMap))
-                dist = oreMap.GetUnpaddedColorLerped((float)(pos.X % regionSize) / regionSize * oreMap.InnerSize, (float)(pos.Z % regionSize) / regionSize * oreMap.InnerSize);
-            var probe = pos.Copy();
-            probe.Y = api.World.BlockAccessor.GetTerrainMapheightAt(probe);
-            ore.Variant.GetPropickReading(probe, dist, pickColumn, out double ppt, out double total);
-            picked = workspace == null ? "pick: no workspace" : $"pick {ppt:0.###} ppt = {ppt / 1000 * probe.Y * 1024:0.#} blocks/chunk, factor {total:0.000}";
-        }
-        catch (Exception e) { picked = "pick failed: " + e.Message; }
-        return $"{code} at x={pos.X} z={pos.Z} (top {top}, {column}): {map}; {picked}";
-    }
-
-    /// <summary>One ore at one column: expected ore blocks in its chunk column and the pick's factor; false when unknown.
-    /// <paramref name="rock"/>: vanilla's simulated column where Earth keeps vanilla strata (null where it does not);
-    /// <paramref name="unknown"/>: that column was needed but could not be made.</summary>
-    bool Cell(Ore ore, BlockPos pos, int top, int[] rock, bool unknown, int regionSize, out double blocks, out double factor)
-    {
-        blocks = factor = 0;
-        if (ore.Reading)
-        {
-            if (unknown) return false;
-            ore.Variant.GetPropickReading(pos, 0, rock, out double ppt, out double total);
-            if (!double.IsFinite(ppt) || !double.IsFinite(total)) return false;
-            blocks = Math.Max(0, ppt) / 1000 * top * 1024;
-            factor = Math.Max(0, total);
-            return true;
-        }
-        if (api.WorldManager.GetMapRegion(pos.X / regionSize, pos.Z / regionSize) == null) return false;
-        double f = ore.Variant.GetOreMapFactor(pos.X / OreHeat.ChunkSize, pos.Z / OreHeat.ChunkSize);
-        blocks = f * ore.BlocksAtFull;
-        factor = f;
-        return true;
     }
 
     /// <summary>Starts storing the coarse levels (<see cref="OreHeat.StoreAheadKeys"/>), once per server run, where every

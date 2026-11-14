@@ -74,8 +74,8 @@ public sealed class WmapSystem : ModSystem
         // Tiles are stored in the world's cache folder beside the atlas's, under the same size limit (WM-D48).
         var oreHeat = new OreHeatServer(api, channel, server.Allowed, () => server.Source?.Info.Topology(), () => server.Source?.Samplers?.Invoke(),
             Math.Clamp(config.Threads / 2, 1, 4), () => server.CacheFolder, config.DiskCacheMiB);
-        server.OreHeat = oreHeat;
-        channel.SetMessageHandler<OreHeatRequest>((p, r) => Admit(api, p, () => oreHeat.Request(p, r), "wmap-ore-heat"));
+        if (config.OreHeatMaps) server.OreHeat = oreHeat; // off: no codes offered, no atlas drop-down (WM-0025)
+        channel.SetMessageHandler<OreHeatRequest>((p, r) => { if (config.OreHeatMaps) Admit(api, p, () => oreHeat.Request(p, r), "wmap-ore-heat"); });
         // Checks a heat map against the pick where you stand (WM-0011): this map's answer worked out at your column now, beside
         // the prospecting pick's own reading there. For players with the full map.
         api.ChatCommands.Create("wmapore").WithDescription("World Map: the ore heat map at your column beside the prospecting pick's reading there")
@@ -83,6 +83,7 @@ public sealed class WmapSystem : ModSystem
             .HandleWith(args =>
             {
                 if (args.Caller.Player is not IServerPlayer player || !server.Allowed(player)) return TextCommandResult.Error("Needs the full map (the wmap privilege or AllowAllPlayers)");
+                if (!config.OreHeatMaps) return TextCommandResult.Error("Ore heat maps are switched off (OreHeatMaps in wmap.json)");
                 var codes = oreHeat.Codes;
                 if (codes.Length == 0) return TextCommandResult.Error("This world has no ore heat maps");
                 string code = args[0] as string;
@@ -162,6 +163,15 @@ public sealed class WmapSystem : ModSystem
                 api.StoreModConfig(config, "wmap.json");
                 return TextCommandResult.Success("Wmap mid-distance view: " + (client?.Far?.MidStatus() ?? "far terrain is not running"));
             })
+            .EndSubCommand()
+            // Far terrain's colour on its own (0.5.3-rc.4), to compare it on screen with the game's ground: not saved.
+            .BeginSubCommand("fardebug").WithDescription("Far terrain debug view: off, albedo (its colour alone) or lit (lit, without haze or fog)")
+            .WithArgs(api.ChatCommands.Parsers.OptionalWordRange("view", "off", "albedo", "lit"))
+            .HandleWith(args =>
+            {
+                if (!args.Parsers[0].IsMissing) FarTerrain.DebugView = (string)args[0] switch { "albedo" => 1, "lit" => 2, _ => 0 };
+                return TextCommandResult.Success("Wmap far terrain debug view: " + FarTerrain.DebugView switch { 1 => "albedo (its colour alone)", 2 => "lit, without haze or fog", _ => "off" });
+            })
             .EndSubCommand();
         // Vanilla registers its map key during LevelFinalize. Bind after all finalize listeners
         // have run, otherwise vanilla overwrites our handler. Reuse its action and saved remapping.
@@ -236,7 +246,8 @@ public sealed class WmapSystem : ModSystem
     {
         if (!info.Allowed)
         {
-            if (wantOpen) capi.ShowChatMessage("The server declined Wmap access. Check that client and server use the same Wmap version.");
+            if (wantOpen) capi.ShowChatMessage(info.Declined != null ? "Wmap: the server declined the atlas: " + info.Declined + "."
+                : "The server declined Wmap access. Check that client and server use the same Wmap version.");
             wantOpen = false; return;
         }
         if (info.Width <= 0 || info.Height <= 0 || !double.IsFinite(info.Width + info.Height + info.StartX) || info.CacheId?.Length != 64 || info.ObservationId?.Length != 64) return;

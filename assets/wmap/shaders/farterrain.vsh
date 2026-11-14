@@ -33,7 +33,11 @@ flat out vec4 wmapFlat;                   // terraces and structures only (farce
 
 void main()
 {
-    vec2 local = vertexIn.xy;
+    // A vertex midway along a coarser ring's edge collapses onto the edge's end below it (0.5.3, WM-0028), so the two rings
+    // meet at the same vertices, each worked out from the same position. Averaging the ends' heights put it on the coarse
+    // edge in theory but left a T-junction, and rasterizing those left single-pixel holes in the far sea along the rings'
+    // edges (the smoke test, at 949 and 1,141 blocks).
+    vec2 local = vertexIn.xy - vertexIn.zw;
 
     // Level of detail from position only, so vertices shared by two rings agree.
     float cheb = max(abs(local.x), abs(local.y));
@@ -41,13 +45,7 @@ void main()
     float cell = wmapChartInfo.z * exp2(ring);
     float lod = log2(max(1.0, cell / wmapChartInfo.x));
 
-    float y;
-    if (vertexIn.z != 0.0 || vertexIn.w != 0.0)
-    {
-        // Midway along a coarser ring's edge: lie exactly on that edge.
-        y = 0.5 * (wmapFinalY(local - vertexIn.zw, lod) + wmapFinalY(local + vertexIn.zw, lod));
-    }
-    else y = wmapFinalY(local, lod);
+    float y = wmapFinalY(local, lod);
 
     vec2 dx = vec2(cell, 0.0), dz = vec2(0.0, cell);
     float hx = wmapGround(local + dx, lod) - wmapGround(local - dx, lod);
