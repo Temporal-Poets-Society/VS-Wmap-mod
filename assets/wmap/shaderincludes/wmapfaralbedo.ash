@@ -2,7 +2,7 @@
 // (farcellmap.fsh, which colours each cell once): the atlas's Terrain style, or the game's own climate tints where forest
 // and climate are known (Earth Map). Include after wmapfartiles.ash.
 
-uniform vec4 wmapWater;                   // rgb: sea colour from the Sea mod; a: 1 when supplied
+uniform vec4 wmapWater;                   // rgb: a colour far water takes instead (the smoke checks' marker); a: 1 when set
 uniform float wmapHeightScale;            // blocks from the sea surface to the top of the world
 uniform sampler2D wmapPlantTint;          // the game's climate colour maps (264 x 264, 4 texels of padding)
 uniform sampler2D wmapWaterTint;
@@ -137,7 +137,7 @@ vec3 wmapWaterTintAt(vec4 biome)
 // the game's near sea shows looking down, a quarter of the tint over deep blue (fitted to Sea's near water in game,
 // 23 October 2026: its colour across distance is this plus the sky by Fresnel), the reflection added in wmapfarshade.ash.
 // Without: as 0.4.0 calibrated it against vanilla water, the grey texture (about 0.5) tinted and lifted toward what its
-// translucent surface shows at a low angle. Sea's FarWaterColor wins.
+// translucent surface shows at a low angle. wmapWater, when set, wins.
 vec3 wmapWaterAlbedo(float deep, vec3 tint)
 {
     if (wmapWater.a > 0.5) return wmapWater.rgb;

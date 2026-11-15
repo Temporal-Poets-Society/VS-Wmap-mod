@@ -9,7 +9,6 @@ public sealed class WmapConfig
     /// Never store this effective config back to wmap.json.</summary>
     public void ApplyWorldOptions(Func<string, bool, bool> readBool)
     {
-        ShareWorldChart = readBool("wmapSharedChart", ShareWorldChart);
         ExploreBySight = readBool("wmapExploreBySight", ExploreBySight);
     }
 
@@ -18,7 +17,8 @@ public sealed class WmapConfig
     public bool AllowAllPlayers = false;
     /// <summary>Legacy local wind reach (500..12000). Retained for config/protocol compatibility; barometers now show worldwide winds.</summary>
     public int BarometerRange = 3000;
-    /// <summary>Send the baked world chart to every player. Gameplay still only reveals explored areas.</summary>
+    /// <summary>No longer used (0.5.4, WM-D63): players without the full map get the prediction only for land they have
+    /// seen, and the world option "shared world chart" is gone. <see cref="AllowAllPlayers"/> gives everyone the full map.</summary>
     public bool ShareWorldChart = true;
     /// <summary>Predict terrain from Earth Map or Cylinder World. False charts only terrain players have
     /// recorded: use it when another terrain generator (Terra Prety, …) makes the prediction wrong.</summary>
@@ -62,8 +62,9 @@ public sealed class WmapConfig
     /// <summary>0 nautical chart, 1 topographic terrain.</summary>
     public int DefaultStyle = 0;
     public bool DecimalDegrees = false;
-    /// <summary>Gameplay charts what lies within this many blocks of the player. The same for every
-    /// player regardless of their view distance; the default matches the game's maximum view distance.</summary>
+    /// <summary>Without line of sight, gameplay charts what lies within this many blocks of the player. Read by the server,
+    /// which charts for every player from 0.5.4 (WM-D63); the same for every player regardless of their view distance; the
+    /// default matches the game's maximum view distance.</summary>
     public int ExploreRadius = 1536;
     public int ResidentTiles = 384;
     public int AtlasPages = 2;
@@ -93,8 +94,9 @@ public sealed class WmapConfig
     public int NearBandDistance = 1536;
     /// <summary>Colour far terrain with the game's climate tints and raise forests (Earth Map; 0.4.0+).</summary>
     public bool FarTerrainClimate = true;
-    /// <summary>Ore heat maps on the full map and `/wmapore` (WM-D47). Off by default from 0.5.3 (WM-0025): on Earth's
-    /// default ores the map can show ore that the prospecting pick does not find, so it ships switched off.</summary>
+    /// <summary>Ore heat maps on the full map and `/wmapore` (WM-D47). Off by default from 0.5.3: a tool for checking ore
+    /// generation. Its mismatch with the pick on vanilla's deposits was fixed in 0.5.3 (WM-0025); the default stays off until
+    /// the author decides.</summary>
     public bool OreHeatMaps = false;
     /// <summary>Mid-distance view (WM-P06 prototype): record every loaded chunk out to the view distance, with the game's
     /// colours and block light, and draw recorded terrain over the prediction in far terrain out to

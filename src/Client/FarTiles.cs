@@ -43,6 +43,11 @@ public sealed class FarTiles : IDisposable
         internal readonly HashSet<TileKey> Loading = new();
         /// <summary>Tiles the disk cache did not have: asked from the server, not from disk again.</summary>
         internal readonly HashSet<TileKey> NotOnDisk = new();
+        /// <summary>Tiles in their slots to ask for again (a survival client, where land became known since they came): their
+        /// texels stand until the new tile replaces them in place, so nothing goes missing for a moment.</summary>
+        internal readonly HashSet<TileKey> Stale = new();
+        /// <summary>Stale tiles that became stale again while on their way: the answer, made before, is not the new one.</summary>
+        internal readonly HashSet<TileKey> Again = new();
         /// <summary>Tiles the window wants, and how many of them are in their slots (as of the last update).</summary>
         public int Wanted, Ready;
         // The window's tiles as of the last move (see Update): kept while the camera stays within a few blocks.
@@ -56,8 +61,10 @@ public sealed class FarTiles : IDisposable
         }
         public bool Semantic => TileContent.HasSemantic(Content);
     }
-    internal sealed class Decoded { public byte[] Semantic, Biome, Season; public long Used; }
-    sealed record Work(TileKey Key, Layer Layer, byte[] Semantic, byte[] Biome, bool Save);
+    // Replace: a tile asked for again while the old one stands in its slot: written over it in place, keeping its fade.
+    internal sealed class Decoded { public byte[] Semantic, Biome, Season; public long Used; public bool Replace; }
+    // Network: from the server (else from disk); Save: write it to the disk cache.
+    sealed record Work(TileKey Key, Layer Layer, byte[] Semantic, byte[] Biome, bool Network, bool Save = false);
     sealed record Result(TileKey Key, Layer Layer, byte[] Semantic, byte[] Biome, bool Missing, string Error, bool Network);
 
     public readonly Layer Band, Climate;
@@ -75,7 +82,10 @@ public sealed class FarTiles : IDisposable
     readonly Task worker;
     long clock;
     bool disposed;
-    public int View = 1;
+    /// <summary>This instance's view, larger than any before it in this game: the server drops answers still on their way
+    /// to an earlier instance (far terrain started again for another mode, whose tiles were cut to other land).</summary>
+    public readonly int View = Interlocked.Increment(ref views);
+    static int views;
     public string LastError;
     /// <summary>The far-terrain origin's lap in tile ids. Kept across seam crossings: crossing the seam moves the
     /// origin's position by a whole circumference but not this count, so resident tiles keep their ids and slots
@@ -111,6 +121,9 @@ public sealed class FarTiles : IDisposable
     /// 336-block fade at its edge, the fog at the climate's, and the 64-block margin of the inner edge.</summary>
     public const double Reselect = 16;
     long expireAt;
+    /// <summary>Whether a tile of this world rectangle (blocks east of the world's start) may be asked for: a survival client
+    /// asks only for tiles of land the server has sent it (0.5.4, WM-D63). Null: any.</summary>
+    public Func<double, double, double, double, bool> Requestable;
     readonly List<TileKey> expired = new();
 
     /// <summary>The prediction at a world point from a decoded near-band tile (4-block texels), main thread: its stored
@@ -211,18 +224,33 @@ public sealed class FarTiles : IDisposable
                     // In its slot, perhaps under the id of another lap: the texels stand, also when the decoded copy is gone.
                     if (!slots.Holds(cell)) slots.Rekey(cell);
                     layer.Ready++;
+                    if (decoded?.Replace == true)
+                    {
+                        if (uploads <= 0) continue;
+                        Upload(layer, slot, decoded);
+                        decoded.Replace = false;
+                        uploads--; Uploads++;
+                    }
+                    else if (layer.Stale.Contains(cell.Key) && !layer.InFlight.ContainsKey(cell.Key) && !layer.Loading.Contains(cell.Key) && requested < InFlightPerLayer
+                        && !(layer.RetryAt.TryGetValue(cell.Key, out long due) && now < due))
+                    {
+                        // Stale until the new tile is taken: a request lost or refused is made again.
+                        Request(layer, cell.Key, now); requested++;
+                    }
                     continue;
                 }
                 if (decoded != null)
                 {
                     if (uploads <= 0) continue;
                     Upload(layer, slot, decoded);
+                    decoded.Replace = false;
                     slots.Place(cell, 0, now);
                     layer.Ready++;
                     uploads--; Uploads++;
                     continue;
                 }
                 if (layer.Loading.Contains(cell.Key) || layer.InFlight.ContainsKey(cell.Key)) continue;
+                if (Requestable != null && !Requestable(cell.Key.X * cell.Key.Span, cell.Key.Z * cell.Key.Span, (cell.Key.X + 1) * cell.Key.Span, (cell.Key.Z + 1) * cell.Key.Span)) continue;
                 if (layer.RetryAt.TryGetValue(cell.Key, out long retry) && now < retry) continue;
                 // The disk cache first; the worker asks the network when it has nothing.
                 if (folder != null && !layer.NotOnDisk.Contains(cell.Key))
@@ -237,6 +265,42 @@ public sealed class FarTiles : IDisposable
             if (layer.Cache.Count > CachedPerLayer)
                 foreach (var key in layer.Cache.Where(p => !wanted.Contains(p.Key)).OrderBy(p => p.Value.Used).Take(layer.Cache.Count - CachedPerLayer).Select(p => p.Key).ToArray())
                     layer.Cache.Remove(key);
+        }
+    }
+
+    /// <summary>Land became known in a world rectangle (blocks east of the world's start; a survival client, WM-D63): tiles
+    /// there came blank where it was not, or not at all, and are asked for again. One in its slot stays drawn until the new
+    /// one replaces it (<see cref="Layer.Stale"/>): the near band does not flicker as land is seen. Its coast distances next
+    /// to that land (<see cref="RevealGate.CoastReach"/>) are not asked for again: far terrain uses them only within ten
+    /// blocks of the shore.</summary>
+    public void Refresh(double rel0, double z0, double rel1, double z1)
+    {
+        bool Overlaps(TileKey k)
+        {
+            double x0 = k.X * k.Span, x1 = x0 + k.Span, kz0 = k.Z * k.Span, kz1 = kz0 + k.Span;
+            if (kz1 <= z0 || kz0 >= z1) return false;
+            if (!Topology.Wraps) return x1 > rel0 && x0 < rel1;
+            for (int lap = -1; lap <= 1; lap++)
+                if (x1 + lap * Topology.Width > rel0 && x0 + lap * Topology.Width < rel1) return true;
+            return false;
+        }
+        foreach (var layer in layers)
+        {
+            foreach (var key in layer.Cache.Keys.Where(Overlaps).ToArray()) layer.Cache.Remove(key);
+            foreach (var key in layer.RetryAt.Keys.Where(Overlaps).ToArray()) layer.RetryAt.Remove(key);
+            for (int s = 0; s < SlotTable.Count; s++)
+                if (layer.Slots.Keys[s] is { } held && Overlaps(held)) layer.Stale.Add(held);
+            // A tile on its way, in a slot or not yet, was cut to the land known when it was asked for: once it is placed it is
+            // asked for again.
+            foreach (var key in layer.InFlight.Keys.Concat(layer.Loading).Where(Overlaps)) { layer.Stale.Add(key); layer.Again.Add(key); }
+            // Tiles that left their slots (and are not on their way) need no refresh: asked for again, they come new anyway.
+            if (layer.Stale.Count > SlotTable.Count)
+            {
+                var keep = new HashSet<TileKey>(layer.InFlight.Keys.Concat(layer.Loading));
+                for (int s = 0; s < SlotTable.Count; s++) if (layer.Slots.Keys[s] is { } k) keep.Add(k);
+                layer.Stale.IntersectWith(keep);
+                layer.Again.IntersectWith(keep);
+            }
         }
     }
 
@@ -270,7 +334,9 @@ public sealed class FarTiles : IDisposable
         // A biome tile carries its grass season below the biome (BiomeTile format 102).
         byte[] biome = r.Biome, season = null;
         if (biome?.Length == 2 * BiomeTile.HalfBytes) { season = biome[BiomeTile.HalfBytes..]; biome = biome[..BiomeTile.HalfBytes]; }
-        layer.Cache[r.Key] = new Decoded { Semantic = r.Semantic, Biome = biome, Season = season, Used = ++clock };
+        layer.Cache[r.Key] = new Decoded { Semantic = r.Semantic, Biome = biome, Season = season, Used = ++clock, Replace = true };
+        // Fresh unless land became known while it was on its way: then it is drawn and asked for again.
+        if (!layer.Again.Remove(r.Key)) layer.Stale.Remove(r.Key);
     }
 
     static readonly byte[] Blank = new byte[FarTileWindow.SlotTexels * FarTileWindow.SlotTexels * 4];
@@ -301,13 +367,16 @@ public sealed class FarTiles : IDisposable
         if (layer == null) return;
         var key = new TileKey(0, r.Level, r.X, r.Z);
         if (!layer.InFlight.Remove(key) || !Topology.Valid(key)) return;
+        // Land this player has not seen (WM-D63): asked again once some of it is known (Refresh), or after a while.
+        if (r.Error == TileResponse.Unexplored) { layer.RetryAt[key] = Environment.TickCount64 + 30000; return; }
         if (r.Error != null || (layer.Semantic && r.Data == null) || r.Data?.Length > SemanticTile.MaxCompressedBytes || r.Biome?.Length > BiomeTile.MaxCompressedBytes)
         {
             LastError = r.Error ?? "Invalid far-terrain tile";
             layer.RetryAt[key] = Environment.TickCount64 + 10000;
             return;
         }
-        if (work.TryAdd(new(key, layer, r.Data, r.Biome, true))) { layer.Loading.Add(key); Received++; }
+        // A tile cut to the land this player has seen is kept in memory only (WM-D63): never in the disk cache.
+        if (work.TryAdd(new(key, layer, r.Data, r.Biome, true, !r.Gated))) { layer.Loading.Add(key); Received++; }
     }
 
     void Worker()
@@ -321,7 +390,7 @@ public sealed class FarTiles : IDisposable
                 {
                     string semanticPath = folder == null ? null : Path.Combine(folder, w.Key.FileName), biomePath = folder == null || biomeId == null ? null : Path.Combine(folder, BiomeTile.FileName(w.Key, biomeId));
                     byte[] packedSemantic = w.Semantic, packedBiome = w.Biome;
-                    if (!w.Save)
+                    if (!w.Network)
                     {
                         packedSemantic = w.Layer.Semantic ? Read(semanticPath, SemanticTile.MaxCompressedBytes) : null;
                         packedBiome = Read(biomePath, BiomeTile.MaxCompressedBytes);
@@ -330,7 +399,7 @@ public sealed class FarTiles : IDisposable
                     try { if (packedBiome != null) biome = BiomeTile.Unpack(packedBiome); } catch (InvalidDataException) { packedBiome = null; }
                     // From disk, both parts must be there (a server without biome sends none: then the semantic part alone).
                     // A server without biome tiles (no biome identity) has semantic tiles alone, on disk too.
-                    missing = (w.Layer.Semantic && semantic == null) || (!w.Save && biomeId != null && biome == null) || (!w.Layer.Semantic && biome == null);
+                    missing = (w.Layer.Semantic && semantic == null) || (!w.Network && biomeId != null && biome == null) || (!w.Layer.Semantic && biome == null);
                     if (w.Save && !missing && folder != null)
                     {
                         try
@@ -341,10 +410,10 @@ public sealed class FarTiles : IDisposable
                         }
                         catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { error = "Far terrain cache write: " + e.Message; }
                     }
-                    if (!w.Save && !missing) Interlocked.Increment(ref DiskHits);
+                    if (!w.Network && !missing) Interlocked.Increment(ref DiskHits);
                 }
                 catch (Exception e) when (e is not OperationCanceledException) { error = e.Message; missing = true; }
-                results.Add(new(w.Key, w.Layer, semantic, biome, missing, error, w.Save), stop.Token);
+                results.Add(new(w.Key, w.Layer, semantic, biome, missing, error, w.Network), stop.Token);
             }
         }
         catch (OperationCanceledException) { }

@@ -173,6 +173,35 @@ public sealed class MapRenderer : IDisposable
         return true;
     }
 
+    /// <summary>A survival client's chart changed in a rectangle [x0, x1) × [z0, z1) (blocks of land it has seen, WM-D63): rows
+    /// already uploaded go up again; rows still pending go up with the rest. The mipmaps catch up within a second.</summary>
+    public void UpdateBaseRegion(BaseRaster raster, int x0, int z0, int x1, int z1)
+    {
+        if (baseTexture == 0 || raster == null || raster.Width != baseWidth || raster.Height != baseHeight) return;
+        int rows = pendingBase == raster ? baseRows : baseHeight;
+        z1 = Math.Min(z1, rows);
+        if (x1 <= x0 || z1 <= z0) return;
+        using var unpack = new GlUnpack();
+        GL.BindTexture(TextureTarget.Texture2D, baseTexture);
+        GL.PixelStore(PixelStoreParameter.UnpackRowLength, baseWidth);
+        Upload(raster.Rgba, (z0 * baseWidth + x0) * 4, x0, z0, x1 - x0, z1 - z0, PixelFormat.Rgba);
+        GL.PixelStore(PixelStoreParameter.UnpackRowLength, 0);
+        baseMipsStale = pendingBase == null;
+    }
+    bool baseMipsStale;
+    long baseMipsAt;
+
+    /// <summary>Rebuilds the chart's mipmaps after <see cref="UpdateBaseRegion"/>, at most once a second.</summary>
+    public void RefreshBaseMips()
+    {
+        long now = Environment.TickCount64;
+        if (!baseMipsStale || baseTexture == 0 || pendingBase != null || now < baseMipsAt) return;
+        using var unpack = new GlUnpack();
+        GL.BindTexture(TextureTarget.Texture2D, baseTexture);
+        GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
+        baseMipsStale = false; baseMipsAt = now + MaskMipsMs;
+    }
+
     static void Upload(byte[] data, int offset, int x, int y, int width, int height, PixelFormat format)
     {
         var handle = GCHandle.Alloc(data, GCHandleType.Pinned);
@@ -300,6 +329,57 @@ public sealed class MapRenderer : IDisposable
 
     public bool ClimateReady => climateTexture != 0;
 
+    /// <summary>A survival client's climate raster changed in a rectangle (WM-D63).</summary>
+    public void UpdateClimateRegion(BaseRaster climate, int x0, int z0, int x1, int z1)
+    {
+        if (climateTexture == 0 || climate == null || x1 <= x0 || z1 <= z0) return;
+        using var unpack = new GlUnpack();
+        GL.BindTexture(TextureTarget.Texture2D, climateTexture);
+        GL.PixelStore(PixelStoreParameter.UnpackRowLength, climate.Width);
+        Upload(climate.Rgba, (z0 * climate.Width + x0) * 4, x0, z0, x1 - x0, z1 - z0, PixelFormat.Rgba);
+        GL.PixelStore(PixelStoreParameter.UnpackRowLength, 0);
+    }
+
+    // ------------------------------------------------------------------ known texels (survival, WM-D63)
+
+    int knownTexture, knownWidth, knownHeight;
+    /// <summary>Which chart texels a survival client has been given (R: 255 known), at the chart's size, so far terrain draws
+    /// only land the player has seen; 0 with the full map.</summary>
+    public int KnownTexture => knownTexture;
+
+    public void SetKnown(byte[] known, int width, int height, bool wraps)
+    {
+        if (!Ensure()) return;
+        ClearKnown();
+        knownTexture = GL.GenTexture(); knownWidth = width; knownHeight = height;
+        using var unpack = new GlUnpack();
+        GL.BindTexture(TextureTarget.Texture2D, knownTexture);
+        GL.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
+        var handle = GCHandle.Alloc(known, GCHandleType.Pinned);
+        try { GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.R8, width, height, 0, PixelFormat.Red, PixelType.UnsignedByte, handle.AddrOfPinnedObject()); }
+        finally { handle.Free(); }
+        GL.PixelStore(PixelStoreParameter.UnpackAlignment, 4);
+        Filter(false, wraps);
+    }
+
+    public void UpdateKnownRegion(byte[] known, int x0, int z0, int x1, int z1)
+    {
+        if (knownTexture == 0 || x1 <= x0 || z1 <= z0) return;
+        using var unpack = new GlUnpack();
+        GL.BindTexture(TextureTarget.Texture2D, knownTexture);
+        GL.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
+        GL.PixelStore(PixelStoreParameter.UnpackRowLength, knownWidth);
+        Upload(known, z0 * knownWidth + x0, x0, z0, x1 - x0, z1 - z0, PixelFormat.Red);
+        GL.PixelStore(PixelStoreParameter.UnpackRowLength, 0);
+        GL.PixelStore(PixelStoreParameter.UnpackAlignment, 4);
+    }
+
+    public void ClearKnown()
+    {
+        if (knownTexture != 0) GL.DeleteTexture(knownTexture);
+        knownTexture = 0;
+    }
+
     // ------------------------------------------------------------------ drawing
 
     void Set(string name, float x, float y, float z, float w) { if (uniforms.TryGetValue(name, out int l)) GL.Uniform4(l, x, y, z, w); }
@@ -352,7 +432,7 @@ public sealed class MapRenderer : IDisposable
         Bind(UnitBase, "uBase", ready ? baseTexture : 0);
         Set("uBaseInfo", ready ? 1 : 0, (float)(t.Width / Math.Max(1, baseWidth)), baseWidth, baseHeight);
         Bind(UnitMask, "uMask", maskTexture);
-        Set("uMaskInfo", explored && maskTexture != 0 ? 1 : 0, 0, 0, 0);
+        Set("uMaskInfo", explored && maskTexture != 0 ? 1 : 0, knownTexture != 0 ? RevealGate.CoastReach : 0, 0, 0);
         Bind(UnitGeo, "uGeo", geoTexture);
         Set("uGeoInfo", geoTexture != 0 ? 1 : 0, (float)f.MeridianStep, (float)f.ParallelStep, 0);
         Bind(UnitTile, "uTile", 0);
@@ -470,7 +550,7 @@ public sealed class MapRenderer : IDisposable
     {
         if (disposed) return;
         disposed = true;
-        foreach (int t in new[] { baseTexture, maskTexture, geoTexture, windTexture, dayTexture, climateTexture, blank }) if (t != 0) GL.DeleteTexture(t);
+        foreach (int t in new[] { baseTexture, maskTexture, geoTexture, windTexture, dayTexture, climateTexture, knownTexture, blank }) if (t != 0) GL.DeleteTexture(t);
         if (vbo != 0) GL.DeleteBuffer(vbo);
         if (vao != 0) GL.DeleteVertexArray(vao);
         if (program != 0) GL.DeleteProgram(program);

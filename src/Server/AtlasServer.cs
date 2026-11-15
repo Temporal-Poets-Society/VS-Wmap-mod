@@ -63,7 +63,8 @@ public sealed class AtlasServer : IDisposable
     volatile bool climateFresh;
     float announcedProgress = -1;
     long announcedAt;
-    sealed record Job(string Uid, TileRequest Request, int Generation);
+    // Known: for a survival player, whether a cell of the exploration grid may be sent (WM-D63); null for the full map.
+    sealed record Job(string Uid, TileRequest Request, int Generation, Func<int, bool> Known);
     /// <summary>Whether a request asks for something this server serves: the atlas wants semantic tiles; far terrain
     /// wants semantic and biome tiles of the near band (level 2) or biome tiles at any level.</summary>
     public static bool Acceptable(TileRequest r, bool biome) => r.Stream switch
@@ -83,7 +84,13 @@ public sealed class AtlasServer : IDisposable
     public const int ChartPendingLimit = 32;
     /// <summary>64 KiB chunks per 50 ms server tick: 10 MiB/s for one player, 20 MiB/s for all.</summary>
     public const int ChartChunksPerPlayerTick = 8, ChartChunksPerTick = 16;
-    public AtlasServer(ICoreServerAPI api, IServerNetworkChannel channel, WmapConfig config) { this.api = api; this.channel = channel; this.config = config; }
+    public AtlasServer(ICoreServerAPI api, IServerNetworkChannel channel, WmapConfig config)
+    {
+        this.api = api; this.channel = channel; this.config = config;
+        Exploration = new ExplorationServer(api, channel, config, Allowed);
+    }
+    /// <summary>What each player has charted and been sent of the prediction (0.5.4, WM-D63).</summary>
+    public readonly ExplorationServer Exploration;
     public WorldSource Source => source;
     /// <summary>This world's cache folder (by its terrain's cache id); null until <see cref="Start"/>.</summary>
     public string CacheFolder => cache;
@@ -96,6 +103,7 @@ public sealed class AtlasServer : IDisposable
         source = WorldSource.Create(api, config);
         cache = Path.Combine(api.GetOrCreateDataPath("Wmap"), "server", source.Info.CacheId);
         StartWorkers(Math.Clamp(config.Threads / 2, 1, 4));
+        Exploration.Start(source.Info, PlanetRadius(source.Info, config.PlanetScale), source.Samplers != null);
         api.Logger.Notification("[wmap] {0}; ring {1} x {2}; wrap {3}; {4} river segments", source.Info.Source, source.Info.Width, source.Info.Height, source.Info.Wraps, source.Rivers?.Count ?? 0);
         if (source.Samplers != null)
         {
@@ -115,9 +123,15 @@ public sealed class AtlasServer : IDisposable
     // The full (creative) map: creative players, the wmap privilege, or everyone by setting. Asked per request, so a
     // change of game mode applies at once; the client asks for a new manifest when its game mode changes. Not
     // controlserver: a single-player host holds it, and before 0.4.5 it gave them the full map in survival.
+    // The rest get the prediction only for land they have seen (0.5.4, WM-D63; before, every player got the whole chart unless
+    // the world's "shared world chart" option was off).
     internal bool Allowed(IServerPlayer p) => config.AllowAllPlayers || p.HasPrivilege("wmap")
-        || p.WorldData?.CurrentGameMode == EnumGameMode.Creative;
-    bool MayPredict(IServerPlayer p) => Allowed(p) || config.ShareWorldChart;
+        || p.WorldData?.CurrentGameMode == EnumGameMode.Creative || (SinglePlayerFullMap && !api.Server.IsDedicated);
+
+    /// <summary>Switch point (the author, 15 November 2026, WM-D63: "yes of course"; a constant, not a setting): a single-player
+    /// world in survival follows the same rule as a server, so the game plays the same alone. True would give a single-player (or LAN) host
+    /// and their guests the full map in survival.</summary>
+    const bool SinglePlayerFullMap = false;
 
     public void Hello(IServerPlayer p, AtlasHello hello)
     {
@@ -130,8 +144,13 @@ public sealed class AtlasServer : IDisposable
             return;
         }
         if (source == null) { Decline(p, "the server's atlas did not start (its log says why)"); return; }
-        greeted.Add(p.PlayerUID);
+        // A client numbers its views from its start: one started again greets first, and a view left from a request handled
+        // after it left must not hold its requests back. Only at a connection's first greeting: a later one (a change of game
+        // mode) may keep its views, and their jobs.
+        if (greeted.Add(p.PlayerUID))
+            for (int stream = 0; stream < StreamLimits.Length; stream++) views.TryRemove(StreamKey(p.PlayerUID, stream), out _);
         SendInfo(p);
+        Exploration.Hello(p);
     }
 
     void Decline(IServerPlayer p, string why) => channel.SendPacket(new AtlasInfo { Allowed = false, Declined = why, ServerProtocol = WmapProtocol.Version }, p);
@@ -143,14 +162,16 @@ public sealed class AtlasServer : IDisposable
     void SendInfo(IServerPlayer p)
     {
         var s = source.Info;
-        bool chart = MayPredict(p) && s.HasOverview;
+        bool full = Allowed(p);
+        // The whole chart only for the full map; survival clients get it in blocks of land they have seen (WM-D63).
+        bool chart = full && s.HasOverview;
         byte[] packed = basePacked;
         string id = packed != null ? baseId : null;
-        bool full = Allowed(p);
         // The world's info, copied (never changed while serving different players), then what this player may see and the
         // server's settings (0.5.3, WM-0040: copied field by field, so a new field had to be added here too).
         var info = s.Copy();
-        info.Allowed = true; info.CanDevelop = full; info.HasOverview = s.HasOverview && full; info.CanPredict = chart;
+        info.Allowed = true; info.CanDevelop = full; info.HasOverview = s.HasOverview && full; info.CanPredict = s.HasOverview;
+        info.Explored = !full && s.HasOverview;
         info.BaseId = chart ? id : null; info.BaseWidth = baseWidth; info.BaseHeight = baseHeight; info.BaseBytes = chart ? packed?.Length ?? 0 : 0; info.BaseProgress = baseProgress;
         info.BiomeId = s.Biome ? s.BiomeId : null; info.Teleport = true;
         info.ClimateId = chart ? climateId : null; info.ClimateBytes = chart ? climatePacked?.Length ?? 0 : 0;
@@ -198,7 +219,7 @@ public sealed class AtlasServer : IDisposable
 
     public void Request(IServerPlayer p, TileRequest r)
     {
-        if (disposed || source?.Samplers == null || !MayPredict(p) || r.Session != source.Info.Session || !source.Info.Topology().Valid(new(0, r.Level, r.X, r.Z))) return;
+        if (disposed || source?.Samplers == null || r.Session != source.Info.Session || !source.Info.Topology().Valid(new(0, r.Level, r.X, r.Z))) return;
         if (!Acceptable(r, source.Biome != null)) return;
         string key = StreamKey(p.PlayerUID, r.Stream);
         if (r.View < views.GetOrAdd(key, r.View)) return;
@@ -206,7 +227,7 @@ public sealed class AtlasServer : IDisposable
         outstanding.TryGetValue(key, out int count);
         if (count >= StreamLimits[r.Stream]) return;
         generations.TryGetValue(p.PlayerUID, out int generation);
-        var job = new Job(p.PlayerUID, r, generation);
+        var job = new Job(p.PlayerUID, r, generation, Exploration.KnownFor(p));
         if (r.Stream == 0)
         {
             if (jobs.TryAdd(job)) outstanding[key] = count + 1;
@@ -224,6 +245,8 @@ public sealed class AtlasServer : IDisposable
     /// <summary>Queues a chart chunk request. Thread-safe and cheap, so it may run on the network thread.</summary>
     public void RequestBase(IServerPlayer p, BaseRequest r)
     {
+        // The whole chart only for the full map (WM-D63). Allowed reads the player's mode and privileges: safe here.
+        if (!Allowed(p)) return;
         bool climate = r.BaseId != null && r.BaseId == climateId;
         byte[] data = climate ? climatePacked : basePacked;
         if (disposed || data == null || (!climate && r.BaseId != baseId) || r.Offset < 0 || r.Offset >= data.Length || r.Offset % BaseChunk.Size != 0) return;
@@ -248,7 +271,7 @@ public sealed class AtlasServer : IDisposable
             var player = api.World.PlayerByUid(uid) as IServerPlayer;
             // A request that arrived after its player left made a new queue: drop it with the player.
             if (player == null) { chartQueues.TryRemove(uid, out _); continue; }
-            if (!MayPredict(player)) { lock (queue) { queue.Offsets.Clear(); queue.Pending.Clear(); } continue; }
+            if (!Allowed(player)) { lock (queue) { queue.Offsets.Clear(); queue.Pending.Clear(); } continue; }
             for (int n = 0; n < ChartChunksPerPlayerTick && budget > 0; n++)
             {
                 ChartPart part;
@@ -269,13 +292,14 @@ public sealed class AtlasServer : IDisposable
     public void Tick()
     {
         SendChart();
+        Exploration.Tick();
         for (int i = 0; i < 16 && completed.TryTake(out var done); i++)
         {
             generations.TryGetValue(done.uid, out int generation);
             if (done.generation != generation) continue;
             string key = StreamKey(done.uid, done.response.Stream);
             if (outstanding.TryGetValue(key, out int count)) outstanding[key] = Math.Max(0, count - 1);
-            if (api.World.PlayerByUid(done.uid) is not IServerPlayer player || !MayPredict(player)) continue;
+            if (api.World.PlayerByUid(done.uid) is not IServerPlayer player) continue;
             if (views.TryGetValue(key, out var view) && view == done.response.View) channel.SendPacket(done.response, player);
         }
         // Sampling can report 100% before compression/hash/cache publication finishes.
@@ -307,6 +331,7 @@ public sealed class AtlasServer : IDisposable
         generations[uid] = generations.TryGetValue(uid, out int generation) ? generation + 1 : 1;
         farJobs.TryRemove(uid, out _);
         chartQueues.TryRemove(uid, out _); greeted.Remove(uid); chartAnnounced.Remove(uid); teleports.Remove(uid);
+        Exploration.Leave(uid);
     }
 
     void BakeWorld()
@@ -317,6 +342,7 @@ public sealed class AtlasServer : IDisposable
             int width = baseWidth, height = baseHeight;
             string path = Path.Combine(cache, $"world-{BaseRaster.Version}-{width}x{height}.wmr");
             byte[] packed = null;
+            BaseRaster raster = null;
             if (File.Exists(path))
             {
                 try { packed = File.ReadAllBytes(path); if (!Verified(path, packed)) { BaseRaster.Unpack(packed); WriteDigest(path, packed); } }
@@ -326,7 +352,7 @@ public sealed class AtlasServer : IDisposable
             {
                 var watch = Stopwatch.StartNew();
                 api.Logger.Notification("[wmap] Charting the whole world once: {0} x {1} texels, {2:0.#} blocks each, {3} threads", width, height, t.Width / width, config.Threads);
-                var raster = BaseRaster.Bake(t, width, height, source.Info.SeaLevel, source.Samplers, source.Rivers, config.Threads, stop.Token, p => baseProgress = (float)p, source.Info.ChartHeightRange);
+                raster = BaseRaster.Bake(t, width, height, source.Info.SeaLevel, source.Samplers, source.Rivers, config.Threads, stop.Token, p => baseProgress = (float)p, source.Info.ChartHeightRange);
                 packed = raster.Pack();
                 // Caching is optional: a chart that could not be written is still published.
                 try { TileCodec.WriteAtomic(path, packed); WriteDigest(path, packed); }
@@ -335,6 +361,8 @@ public sealed class AtlasServer : IDisposable
             }
             baseId = Digest(packed);
             basePacked = packed;
+            // Kept unpacked for the server's line of sight and survival clients' blocks (WM-D63).
+            Exploration.SetChart(raster ?? BaseRaster.Unpack(packed));
             if (source.Biome != null) BakeClimate(t, width, height);
         }
         catch (OperationCanceledException) { }
@@ -390,6 +418,7 @@ public sealed class AtlasServer : IDisposable
             }
             climateId = Digest(packed);
             climatePacked = packed;
+            Exploration.SetClimate(ClimateRaster.Unpack(packed));
             climateFresh = true;
         }
         catch (OperationCanceledException) { }
@@ -443,6 +472,15 @@ public sealed class AtlasServer : IDisposable
             if (!views.TryGetValue(StreamKey(job.Uid, r.Stream), out int view) || view != r.View) { response.Error = "obsolete"; return true; }
             if (sample == null) { response.Error = "No overview provider"; return true; }
             var key = new TileKey(0, r.Level, r.X, r.Z);
+            // A survival player's tile of land they have not seen is answered without being made (WM-D63): asking costs the
+            // server nothing, and the answer's time tells nothing. Before the chart is baked nothing is seen.
+            RevealGate.TileWindow window = null;
+            if (job.Known != null)
+            {
+                var grid = Exploration.Grid;
+                window = grid != null ? RevealGate.Window(key, grid, job.Known) : null;
+                if (window?.Any != true) { response.Error = TileResponse.Unexplored; return true; }
+            }
             if (TileContent.HasSemantic(r.Content))
                 response.Data = Cached(Path.Combine(cache, key.FileName), SemanticTile.MaxCompressedBytes, b => SemanticTile.Unpack(b),
                     () => SemanticTile.Pack(SemanticTile.Sample(t, key, sample, source.Info.SeaLevel, stop.Token, sampled.GetValue(source, _ => new SemanticTile.SampleCache()), source.Info.ChartHeightRange)));
@@ -450,11 +488,41 @@ public sealed class AtlasServer : IDisposable
             if (TileContent.HasBiome(r.Content) && source.Biome != null)
                 response.Biome = Cached(Path.Combine(cache, BiomeTile.FileName(key, source.Info.BiomeId)), BiomeTile.MaxCompressedBytes, b => BiomeTile.Unpack(b),
                     () => BiomeTile.Pack(BiomeTile.Sample(t, key, source.Biome, source.Season, stop.Token)));
+            if (window != null) Gate(response, window);
             return true;
         }
-        catch (OperationCanceledException) { return false; }
-        catch (Exception e) { response.Error = e.GetType().Name + ": " + e.Message; return true; }
+        catch (OperationCanceledException)
+        {
+            if (job.Known != null) { response.Data = null; response.Biome = null; }
+            return false;
+        }
+        catch (Exception e)
+        {
+            // Fail closed: a survival player's tile that went wrong after it was made is not sent ungated.
+            if (job.Known != null) { response.Data = null; response.Biome = null; }
+            response.Error = e.GetType().Name + ": " + e.Message;
+            return true;
+        }
         finally { if (!disposed) try { completed.Add((job.Uid, job.Generation, response), stop.Token); } catch (OperationCanceledException) { } }
+    }
+
+    /// <summary>A survival player's tile (WM-D63): texels of land they have not seen are blanked and the distances of the
+    /// others limited to what seen land shows (<see cref="RevealGate"/>).</summary>
+    static void Gate(TileResponse response, RevealGate.TileWindow window)
+    {
+        if (response.Data != null)
+        {
+            var rgba = SemanticTile.Unpack(response.Data);
+            RevealGate.Semantic(rgba, window);
+            response.Data = SemanticTile.Pack(rgba);
+        }
+        if (response.Biome != null)
+        {
+            var rgba = BiomeTile.Unpack(response.Biome);
+            RevealGate.Biome(rgba, window);
+            response.Biome = BiomeTile.Pack(rgba);
+        }
+        response.Gated = true;
     }
 
     // Neighbouring prediction tiles overlap by their sampling margins: the samples a tile took are kept for its
@@ -485,5 +553,5 @@ public sealed class AtlasServer : IDisposable
         finally { making.TryRemove(new KeyValuePair<string, Lazy<byte[]>>(path, lazy)); }
     }
 
-    public void Dispose() { disposed = true; stop.Cancel(); jobs.CompleteAdding(); /* Workers own no game API calls and observe cancellation per tile row. */ }
+    public void Dispose() { disposed = true; stop.Cancel(); jobs.CompleteAdding(); Exploration.Dispose(); /* Workers own no game API calls and observe cancellation per tile row. */ }
 }

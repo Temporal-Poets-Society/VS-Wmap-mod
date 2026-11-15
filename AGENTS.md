@@ -7,9 +7,10 @@ maps. Suite rules: `C:\VS mods\AGENTS.md`. Current state: the card `C:\VS mods\o
 WM-Pnn); test results: `docs\testing.md`.
 
 ## Repository
-- Trunk `main`, tracking the private `origin` (`andrisberzins-1/VS-Wmap-mod`); no public repo. Published versions
-  are tags (`v0.5.0`, `v0.5.1`); old lines are `archive/*` tags.
-- `main` carries 0.5.3 (built 14 November 2026; publishing, the tag and the push are the author's).
+- Trunk `main`, tracking the private `origin` (`andrisberzins-1/VS-Wmap-mod`). The public
+  `Temporal-Poets-Society/VS-Wmap-mod` (remote `tps`) holds clean release snapshots only. Published versions are tags
+  (`v0.5.0`, `v0.5.1`, `v0.5.3`); old lines are `archive/*` tags.
+- `main` carries 0.5.4 (built 15 November 2026, `release/wmap_0.5.4.zip`; publishing, the tag and the push are the author's).
 
 ## Build
 - First `.\tools\Prepare-References.ps1 -GamePath "$env:APPDATA\Vintagestory"`: it copies the game DLLs into
@@ -19,7 +20,7 @@ WM-Pnn); test results: `docs\testing.md`.
   the same version. The 0.4.x-0.5.1 zips there (some with `.sha256`, git-ignored) are the only local copies.
 
 ## Test
-- `dotnet run --project tests\WmapTests\WmapTests.csproj -c Release` (core assertions; 108,832 at 0.5.3; a run lists every failed check with its line).
+- `dotnet run --project tests\WmapTests\WmapTests.csproj -c Release` (core assertions; 108,876 at 0.5.4; a run lists every failed check with its line).
 - `.\tools\Run-PlaytestChecks.ps1 -EarthRoot "C:\VS mods\Earth" -Output .local\playtest-after` (with
   `tests\PlaytestTests`).
 - Smoke: `dotnet build tests\SmokeMod\SmokeMod.csproj -c Release`, then
@@ -46,3 +47,7 @@ WM-Pnn); test results: `docs\testing.md`.
 - Ore heat maps hand Earth vanilla's simulated rock column where Earth keeps vanilla strata (WM-D51); `/wmapore`
   compares a cell with the pick where you stand.
 - Recorded terrain wins over predictions (WM-D11, D29, D41).
+- Survival clients get only the prediction of land they have seen (WM-D63): the server gates every tile and chart block
+  (`RevealGate`, `ExplorationServer`). Anything new sent to clients must go through it, distances included (a value that
+  says where something else lies). On the bench, `/bridge fly` switches the player to creative: check the survival rule
+  as a spectator (it can fly and is not creative).

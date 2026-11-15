@@ -35,19 +35,9 @@ public sealed class WmapClient : IDisposable
     public readonly PaperMapClient PaperMaps;
     /// <summary>The full map's ore heat map (WM-D47).</summary>
     public readonly OreHeatLayer OreHeat;
-    readonly string maskPath;
     readonly CancellationTokenSource stop = new();
-    Task<byte[]> seeding;
-    Task<bool> unmerged;
-    long mergeAt;
-    // True once the exploration snapshot is on disk.
-    Task<bool> saving = Saved;
-    static readonly Task<bool> Saved = Task.FromResult(true);
-    // The last exploration write per file, across sessions: writes to one file run in order, so an older
-    // snapshot never replaces a newer one, and a new session loads only after the last one is written.
-    static readonly Dictionary<string, Task<bool>> maskWrites = new();
     Func<double, double, GeoPosition> geography;
-    long geographyAt, revealAt, savedAt;
+    long geographyAt;
     bool geographyBuilt;
     Task<float[]> geoTask;
     public AtlasInfo Info => Tiles.Info;
@@ -92,20 +82,9 @@ public sealed class WmapClient : IDisposable
         AutoMarks = new AutoMarker(api, config, r => channel?.SendPacket(r));
         BaseMap = new BaseMapClient(channel, cache);
         Climate = new BaseMapClient(channel, cache, true);
-        maskPath = Path.Combine(observed, ExploredMask.FileName);
-        Task<bool> pending;
-        lock (maskWrites) maskWrites.TryGetValue(maskPath, out pending);
-        // A previous session's write still running after 2 s: load what is on disk now, merge its result
-        // when it lands, and merge the file into every write until then.
-        if (pending != null && !pending.Wait(2000)) unmerged = pending;
-        // An unreadable file is merged later, the same way: an empty mask must not be saved over it.
-        if (!ExploredMask.TryLoad(Tiles.Topology, maskPath, out Mask)) unmerged ??= Saved;
-        if (!File.Exists(maskPath))
-        {
-            // First run with this version: chart everything recorded by earlier Wmap versions.
-            var t = Tiles.Topology; int w = Mask.Width, h = Mask.Height;
-            seeding = Task.Run(() => ExploredMask.FromObservations(t, observed, w, h, stop.Token), stop.Token);
-        }
+        // What this player has charted comes from the server (0.5.4, WM-D63), which casts their line of sight and keeps it in
+        // the world save; before, the client cast it and kept it in its own folder, where a modified client could chart anything.
+        Mask = new ExploredMask(Tiles.Topology);
         Observed = new ObservedTerrain(api, Tiles, config);
         PaperMaps = new PaperMapClient(Tiles, Mask, channel, text => api.ShowChatMessage(text));
         OreHeat = new OreHeatLayer(api, r => channel?.SendPacket(r), () => Topology);
@@ -119,12 +98,98 @@ public sealed class WmapClient : IDisposable
             height = 0; water = false;
             return Far?.Tiles?.Predicted(x, z, out height, out water) == true;
         };
+        Tiles.Predictable = Predictable;
+        Follow(info);
         BaseMap.Update(info); Climate.Update(info);
+    }
+
+    /// <summary>A survival client's chart and climate raster, built from the blocks of land the player has seen (0.5.4, WM-D63);
+    /// null with the full map.</summary>
+    public ExploredChart Explored { get; private set; }
+
+    /// <summary>Starts or ends a survival client's chart when the manifest's mode changes. Its renderer starts again from an
+    /// empty chart; with the full map it gets the whole chart again (<see cref="BaseMap"/>).</summary>
+    void Follow(AtlasInfo info)
+    {
+        if (info.Explored && info.BaseWidth > 0 && info.BaseHeight > 0)
+        {
+            if (Explored != null && Explored.Chart.Width == info.BaseWidth && Explored.Chart.Height == info.BaseHeight) return;
+            Explored = new ExploredChart(Topology, info.BaseWidth, info.BaseHeight);
+            keepKnown = false;
+            BaseMap.Forget(); Climate.Forget();
+            Renderer.SetBase(Explored.Chart, Topology);
+            Renderer.SetKnown(Explored.Known, Explored.Chart.Width, Explored.Chart.Height, Topology.Wraps);
+            Tiles.DropPredicted();
+            return;
+        }
+        if (Explored == null) return;
+        Explored = null;
+        // The renderer keeps the survival chart and its known texels until the whole chart has come (Tick): far terrain draws
+        // only those meanwhile, not the rest of a chart that holds nothing there (a grey plain to the horizon for a minute).
+        keepKnown = true;
+        Tiles.DropPredicted();
+    }
+    bool keepKnown;
+
+    /// <summary>Whether the atlas asks for a predicted tile: with the full map any; in survival one holding a charted cell.</summary>
+    bool Predictable(TileKey key)
+    {
+        if (!Info.Explored) return true;
+        var grid = Mask.Grid;
+        int x0 = (int)Math.Floor(key.X * key.Span / grid.TexelX), x1 = (int)Math.Ceiling((key.X + 1) * key.Span / grid.TexelX);
+        int z0 = (int)Math.Floor(key.Z * key.Span / grid.TexelZ), z1 = (int)Math.Ceiling((key.Z + 1) * key.Span / grid.TexelZ);
+        if (x1 - x0 >= grid.Width) { x0 = 0; x1 = grid.Width; }
+        for (int z = Math.Max(0, z0); z < Math.Min(grid.Height, z1); z++)
+        for (int x = x0; x < x1; x++)
+        {
+            int wx = grid.Wraps ? (int)Topology.Mod(x, grid.Width) : x;
+            if (wx >= 0 && wx < grid.Width && Mask.Data[z * grid.Width + wx] == 255) return true;
+        }
+        return false;
+    }
+
+    /// <summary>Whether far terrain asks for a tile of this world rectangle (blocks east of the world's start): with the full
+    /// map any; in survival one holding land the server has sent.</summary>
+    public bool KnownAt(double rel0, double z0, double rel1, double z1) => Explored?.AnyKnown(rel0, z0, rel1, z1) ?? !Info.Explored;
+
+    /// <summary>The cells the server says this player has charted (0.5.4, WM-D63): all of them after a greeting, else the new ones.</summary>
+    public void ReceiveExplore(ExploreUpdate update)
+    {
+        if (update?.Cells == null || update.Session != Info.Session) return;
+        CellSet cells;
+        try { cells = CellSet.Unpack(update.Cells, Mask.Width, Mask.Height); }
+        catch (InvalidDataException) { Tiles.LastError = "Invalid exploration update"; return; }
+        if (update.Reset) Mask.Clear();
+        var list = cells.Cells();
+        Mask.RevealCells(list);
+        // Predicted tiles holding newly charted cells (or next to them) are asked for again: they came blank there, or not at all.
+        if (Info.Explored && list.Count > 0) { Tiles.RefreshPredicted(key => Touches(key, cells)); Tiles.Reconsider(); }
+    }
+
+    /// <summary>Whether newly charted cells lie in a tile or within its coast reach (<see cref="RevealGate.CoastReach"/> of its
+    /// texels, whose coast distances they can change).</summary>
+    bool Touches(TileKey key, CellSet cells)
+    {
+        var grid = Mask.Grid;
+        double reach = RevealGate.CoastReach * key.Step;
+        int px = (int)Math.Ceiling(reach / grid.TexelX) + 1, pz = (int)Math.Ceiling(reach / grid.TexelZ) + 1;
+        int x0 = (int)Math.Floor(key.X * key.Span / grid.TexelX) - px, x1 = (int)Math.Ceiling((key.X + 1) * key.Span / grid.TexelX) + px;
+        int z0 = (int)Math.Floor(key.Z * key.Span / grid.TexelZ) - pz, z1 = (int)Math.Ceiling((key.Z + 1) * key.Span / grid.TexelZ) + pz;
+        if (!grid.Wraps) { x0 = Math.Max(0, x0); x1 = Math.Min(grid.Width, x1); }
+        return cells.AnyIn(x0, z0, x1, z1);
+    }
+    readonly List<(double X0, double Z0, double X1, double Z1)> knownChanges = new();
+
+    /// <summary>A block of the chart or the climate raster of land the player has seen (0.5.4, WM-D63).</summary>
+    public void ReceivePatch(ChartPatch patch)
+    {
+        if (patch == null || patch.Session != Info.Session || Explored == null) return;
+        if (!Explored.Apply(patch)) Tiles.LastError = "Invalid chart block";
     }
 
     public void Update(AtlasInfo info)
     {
-        Tiles.Update(info); BaseMap.Update(info); Climate.Update(info);
+        Tiles.Update(info); Follow(info); BaseMap.Update(info); Climate.Update(info);
         // Whether the near band and climate tiles may be drawn can change in a session (a player switched to creative
         // where predictions are not shared): far terrain starts again with their mesh and tiles.
         if (Far != null && !Far.Matches(info))
@@ -158,19 +223,20 @@ public sealed class WmapClient : IDisposable
         PaperMaps.Tick();
         if (Climate.Take() is { } climate) Renderer.SetClimate(climate, Topology.Wraps);
         var raster = BaseMap.Take();
-        if (raster != null)
+        if (raster != null && Explored == null)
         {
             Renderer.SetBase(raster, Topology);
-            var t = Topology;
-            double range = Info.ChartHeightRange;
-            heightTask = Task.Run(() => HeightGrid.FromRaster(raster, t, range), stop.Token);
-        }
-        if (heightTask?.IsCompleted == true)
-        {
-            if (heightTask.Status == TaskStatus.RanToCompletion) Heights = heightTask.Result;
-            heightTask = null;
+            if (keepKnown) { Renderer.ClearKnown(); keepKnown = false; }
         }
         Renderer.PumpBase(12 << 20);
+        if (Explored != null)
+        {
+            Explored.Upload(Renderer, Topology.Wraps);
+            // Land newly known: far terrain asks again for its tiles there.
+            knownChanges.Clear();
+            Explored.TakeKnownChanges(knownChanges);
+            foreach (var (rel0, z0, rel1, z1) in knownChanges) Far?.Tiles?.Refresh(rel0, z0, rel1, z1);
+        }
         if (!geographyBuilt && Geography is { } geo)
         {
             // Half a million lookups: built on a worker (the conversions are pure), uploaded here.
@@ -184,111 +250,11 @@ public sealed class WmapClient : IDisposable
             else Api.Logger?.Warning("[wmap] The latitude and longitude grid could not be built: {0}", geoTask.Exception?.InnerException?.Message);
             geoTask = null;
         }
-        long now = Environment.TickCount64;
-        if (unmerged?.IsCompleted == true && now >= mergeAt)
-        {
-            if (ExploredMask.TryLoad(Tiles.Topology, maskPath, out var disk)) { Mask.Merge(disk.Data); unmerged = null; }
-            else mergeAt = now + 1000;
-        }
-        if (seeding?.IsCompleted == true)
-        {
-            if (seeding.Status == TaskStatus.RanToCompletion) Mask.Merge(seeding.Result);
-            seeding = null;
-        }
-        var pos = Api.World.Player?.Entity?.Pos;
-        if (pos != null && pos.Dimension == 0 && now - revealAt > 250)
-        {
-            revealAt = now;
-            // By line of sight (the server's choice): a small circle, and what the eye sees once the chart's heights are
-            // here. Without a shared chart there are no heights: the full circle.
-            bool sight = Info.ExploreBySight && Info.CanPredict;
-            Mask.Reveal(pos.X, pos.Z, sight ? Math.Max(16, Info.SightCircle) : Config.ExploreRadius);
-            if (sight) CastSight(pos.X, pos.Y, pos.Z);
-        }
-        if (sightTask?.IsCompleted == true)
-        {
-            if (sightTask.Status == TaskStatus.RanToCompletion) { Mask.RevealCells(sightTask.Result); SightCasts++; }
-            sightTask = null;
-        }
-        SaveResult();
-        if (Mask.Unsaved && now - savedAt > 30000 && saving.IsCompleted) Save();
-    }
-
-    /// <summary>The ground heights line of sight looks over (from the world chart), once it has arrived.</summary>
-    public HeightGrid Heights { get; private set; }
-    Task<HeightGrid> heightTask;
-    Task<int[]> sightTask;
-    double sightX = double.NaN, sightY, sightZ;
-    public int SightCasts { get; private set; }
-    /// <summary>Eye height above the feet; the deck of a ship or a mast top counts as where the player stands.</summary>
-    const double EyeHeight = 1.6;
-
-    /// <summary>Casts line of sight in the background after the player has moved 32 blocks or climbed 3 since the last cast.</summary>
-    void CastSight(double x, double y, double z)
-    {
-        var heights = Heights;
-        if (heights == null || sightTask != null) return;
-        if (!double.IsNaN(sightX) && Math.Abs(Topology.Delta(sightX, x)) < 32 && Math.Abs(z - sightZ) < 32 && Math.Abs(y - sightY) < 3) return;
-        sightX = x; sightY = y; sightZ = z;
-        double eye = y + EyeHeight - (Info.SeaLevel - 1), distance = Math.Max(512, Info.SightDistance);
-        double step = Math.Min(Mask.TexelX, Mask.TexelZ) / 2;
-        var mask = Mask;
-        // The distinct cells, collected on the worker: the main thread charts each once.
-        // Enclosed hidden patches up to the server's square, in texels.
-        int holes = (int)(Math.Max(0, Info.SightHoleSize) * (double)Math.Max(0, Info.SightHoleSize) / (mask.TexelX * mask.TexelZ));
-        // Over the planet's curve (0.4.11): low coasts sink under the horizon long before the reach.
-        double radius = Info.PlanetRadius;
-        sightTask = Task.Run(() => mask.SightCells(heights, x, z, eye, distance, step, holes, radius), stop.Token);
-    }
-
-    byte[] saveBuffer;
-
-    void Save()
-    {
-        savedAt = Environment.TickCount64;
-        // The last save's copy again once its write is done (0.5.0-pre.4); while it is still being written, a new one.
-        bool free = saving.IsCompleted;
-        byte[] snapshot = Mask.Snapshot(free ? saveBuffer : null);
-        if (free) saveBuffer = snapshot;
-        int w = Mask.Width, h = Mask.Height; string path = maskPath;
-        var topology = Tiles.Topology; bool merge = unmerged != null;
-        bool Write()
-        {
-            try
-            {
-                // Runs after the earlier writes to this file, so the file holds their exploration.
-                if (merge)
-                {
-                    if (!ExploredMask.TryLoad(topology, path, out var disk)) { Tiles.LastError = "Exploration save: the saved exploration cannot be read to merge it"; return false; }
-                    for (int i = 0; i < snapshot.Length; i++) if (disk.Data[i] > snapshot[i]) snapshot[i] = disk.Data[i];
-                }
-                TileCodec.WriteAtomic(path, ExploredMask.Pack(snapshot, w, h)); return true;
-            }
-            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { Tiles.LastError = "Exploration save: " + e.Message; return false; }
-        }
-        lock (maskWrites)
-        {
-            var write = maskWrites.TryGetValue(path, out var previous) ? previous.ContinueWith(_ => Write(), TaskScheduler.Default) : Task.Run(Write);
-            maskWrites[path] = saving = write;
-            write.ContinueWith(_ => { lock (maskWrites) if (maskWrites.TryGetValue(path, out var last) && last == write) maskWrites.Remove(path); }, TaskScheduler.Default);
-        }
-    }
-
-    /// <summary>Snapshot cleared Unsaved; a failed write sets it again for the next attempt.</summary>
-    void SaveResult()
-    {
-        if (!saving.IsCompleted || saving == Saved) return;
-        if (!saving.IsCompletedSuccessfully || !saving.Result) Mask.SaveFailed();
-        saving = Saved;
     }
 
     public void Dispose()
     {
         stop.Cancel();
-        SaveResult();
-        // An unfinished write may still fail; the final snapshot is written after it either way.
-        if (Mask.Unsaved || !saving.IsCompleted) Save();
-        saving.Wait(2000);
         Far?.Dispose(); Winds.Dispose(); Observed.Dispose(); Tiles.Dispose(); BaseMap.Dispose(); Climate.Dispose(); Renderer.Dispose(); OreHeat.Dispose();
     }
 }

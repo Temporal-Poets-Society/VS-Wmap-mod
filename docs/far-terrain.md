@@ -45,8 +45,7 @@ Only the world chart, which the client already has. No new packets. Consequences
 
 - Worlds without Earth Map or Cylinder World have no world chart, so they get no far terrain (the atlas draws them from recorded terrain only). Drawing recorded detail tiles as far terrain is a possible follow-up. Drawing predicted detail tiles near the player, out to 1536 blocks, is implemented since 0.4.0; see [far-terrain-near-band.md](far-terrain-near-band.md).
 - Since 0.3.8, Cylinder World without Earth Map gets no far terrain either: its chart is a land/sea mask with invented heights (`AtlasInfo.FlatPrediction`), which drew flat plates of land on the horizon, and with another terrain generator (Terra Prety) could put them where the world has sea or mountains. See [decisions.md](decisions.md) WM-D12.
-- With `ShareWorldChart: false`, players without the `wmap` privilege do not receive the chart and get no far terrain.
-- Far terrain shows the predicted world, not structures or player edits, and it is not limited by gameplay exploration: like real sight, it shows whatever is on the horizon.
+- Far terrain shows the predicted world, not structures or player edits. With the full map it shows whatever is on the horizon. A player without it (survival, from 0.5.4, WM-D63) gets the prediction only of land they have charted or have in their line of sight out to 8192 blocks (`ExplorationServer.FarSight`), which the server casts; the rest of their chart is empty, and far terrain draws only the known texels (`wmapKnown`).
 
 ## Cost
 

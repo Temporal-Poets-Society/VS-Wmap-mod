@@ -1,3 +1,30 @@
+# 0.5.4 (15 November 2026)
+
+The unexplored map is for creative only: a survival player's client receives nothing of the predicted world they have not seen. Client and server must both run 0.5.4. **Start a new world:** worlds made with earlier World Map versions are not supported by 0.5.4.
+
+### The unexplored map only in creative
+
+- **Survival players get the prediction only of land they have seen** (WM-0051, WM-D63). Until now every player received the whole world's predicted chart, detail and far terrain (the world option "shared world chart", on by default), and only the client hid what they had not explored, so a modified client could uncover the whole world. Now the server casts each player's line of sight from its own copy of the chart, as clients did, and keeps what they have charted in the world save. A player without the full map receives the chart, detail tiles and far terrain only for land they have charted, and for far terrain the land in their line of sight out to 8192 blocks, which is what they see on the horizon; the atlas charts to the sight distance as before. Tiles reaching past seen land arrive blanked there; tiles of unseen land are not sent at all. Even the distances a survival client gets say nothing of unseen land: how far the coast is, out to 32 chart texels, and where a river runs, as far as seen land shows them. The atlas's coastal wash fades out at that reach in survival.
+- **The same in a single-player survival world.** Creative players, the `wmap` privilege and `AllowAllPlayers` get the whole predicted map as before.
+- **Exploration by sight works as before in survival**, cast by the server now. The client keeps no exploration file of its own any more, and tiles cut to seen land are kept in memory only, never in the tile cache.
+- **The world option "shared world chart" is gone** from the world-creation screen, and `ShareWorldChart` in `wmap.json` is no longer used. A server that wants everyone to see the whole map sets `AllowAllPlayers`.
+- **Paper maps** draw the charted area from the server's record of what the drawer has charted, so a map cannot chart land its drawer has not seen; reading one charts the reader's area on the server.
+- **Worlds from earlier World Map versions are not supported.** Start a new world for 0.5.4. (Earlier versions kept each player's charted area on their own client, where it cannot be trusted; nothing is taken over from there.)
+
+### Sturdier with other mods
+
+- **Cylinder World's runtime settings are recognised by their mark** (WM-0045): the chart's cache leaves out the fields Cylinder World marks as runtime settings, and by their names on older versions.
+- **Earth's climate lookup is bound by its signature** (WM-0047): a second `ClimateAt` in Earth would have stopped the atlas; an unreadable model now falls back to recorded terrain with an error in the log.
+- **Lookups that fail say so** (WM-0048): a missing `RockFloorTop(int, int)` in Earth is logged (ore heat maps read such columns from the bottom up), and a missing Cylinder World number stops the atlas with an error naming it instead of reading 0.
+- **No binding to a colour Sea never had** (WM-0049): far water keeps World Map's own colour.
+- **Far terrain says why it is not drawn** in the client log: waiting for the world chart, or off and why.
+
+### Compatibility
+
+Worlds made with earlier World Map versions are not supported: start a new world. The network protocol is 3: a 0.5.3 client and a 0.5.4 server (or the other way round) decline each other with a message saying so. Players' charted areas are kept in the world save (`wmap-charted-<player>`).
+
+Checked: 108,876 core assertions; the Earth smoke profile with Earth 2.0.0, Cylinder World 1.1.1, Hydrology 0.6.2 and Sea 0.6.1, which charts a patch for a survival player and checks that their tiles and chart blocks hold only that patch, and their coast and river distances only what it shows; in game on a 1:10 Earth world (northern and south-west Tasmania), survival and spectator against creative: the atlas holds only the land you have charted, the far view draws only land you have seen and fills in as you see more, and switching game modes both ways keeps it right; four code reviews of the change.
+
 # 0.5.3 (14 November 2026)
 
 0.5.2 plus a coordinates box with the local time and UTC, Earth's air pressure on the Jonas barometer, ore heat maps that ask the prospecting pick's own question (shipped switched off), and a far view that looks like the land beside it: the game's lighting and its grass and leaf colours through the seasons, no pale ring at the edge of the real chunks, finer relief, forests at their real height, and discovered land at its real height. A code review before release made far terrain cheaper to draw and World Map sturdier against other mods' changes.
@@ -53,7 +80,7 @@
 
 No terrain, world format or item ID changes from 0.5.2. Recorded land samples carry the canopy in their depth (always 0 before); older versions read them as before. Far terrain's climate tiles are format 102, with the grass season below the biome: a client reads an older server's tiles without the season, but an older client cannot read the new ones (it draws the atlas colours), so run 0.5.3 on both client and server. The atlas's info message gained two fields at the end (why it was declined, and the server's protocol); older clients ignore them. Each world's chart and tiles are made again once after the update.
 
-Checked: Release build without warnings; {CORE} core assertions; the far shaders compile and link on an RX 6600 at low and high settings; play-test regression checks against Earth's sources. Earth smoke test (an isolated server with Earth 2.0 on GLO-90, Cylinder World, Hydrology and Sea): {SMOKE}. A code review before release and two re-reviews of its fixes, the last with nothing open. On the AgentBridge bench with test builds of Earth 2.0.0, Cylinder World 1.1.0, Hydrology 0.6.2, Sea 0.6.0 and Astra Terra for Earth 0.15.0: the clocks at Riga (17:36 local) and San Francisco (07:50) at 16:00 UTC, matching Astra Terra's character panel; the box's colour over the Sahara by day and night; the barometer against `/earthweather`; the ore map against the pick at Riga and on the Greenland ice; the far view in Latvia, the Engadin and at Nyiragongo at 1:100 and 1:10, by day and in the evening and after a shader reload. {BENCH}
+Checked: Release build without warnings; 108,832 core assertions; the far shaders compile and link on an RX 6600 at low and high settings; play-test regression checks against Earth's sources. Earth smoke test (an isolated server with Earth 2.0 on GLO-90, Cylinder World, Hydrology and Sea): passed. A code review before release and two re-reviews of its fixes, the last with nothing open. On the AgentBridge bench with test builds of Earth 2.0.0, Cylinder World 1.1.0, Hydrology 0.6.2, Sea 0.6.0 and Astra Terra for Earth 0.15.0: the clocks at Riga (17:36 local) and San Francisco (07:50) at 16:00 UTC, matching Astra Terra's character panel; the box's colour over the Sahara by day and night; the barometer against `/earthweather`; the ore map against the pick at Riga and on the Greenland ice; the far view in Latvia, the Engadin and at Nyiragongo at 1:100 and 1:10, by day and in the evening and after a shader reload. The release build on the bench: the atlas started on Earth's prediction without warnings; the far view and the barometer as before.
 
 Not checked: multiplayer, NVIDIA and Intel GPUs, other GUI scales, a minimap moved to the top left, a Cylinder World without Earth, a client and server of different versions (the decline message), and an Earth with a renamed member.
 

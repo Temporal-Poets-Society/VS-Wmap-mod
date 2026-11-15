@@ -7,7 +7,7 @@
 <h2>Features</h2>
 <ul>
   <li><strong>Two map styles:</strong> a parchment nautical chart with ink coastlines, contours, shallows and a compass rose, or a shaded terrain map with elevation and water depth. Earth supplies regional climate colours and mapped river courses.</li>
-  <li><strong>Exploration:</strong> your survival chart fills in as you travel. With shared predicted terrain available, exploration can follow what you can see over the landscape, accounting for the planet's curve. Otherwise, it charts a circle around you.</li>
+  <li><strong>Exploration:</strong> your survival chart fills in as you travel. With predicted terrain available, exploration follows what you can see over the landscape, accounting for the planet's curve. Otherwise, it charts a circle around you.</li>
   <li><strong>Atlas and minimap:</strong> smooth zoom, a follow mode, player heading, waypoints and prospecting readings. Geographic worlds also show latitude and longitude, with an optional box in the top left corner (under the minimap when it sits there) that gives your coordinates, heading, local time and the world's clock (UTC). With <a href="https://mods.vintagestory.at/astraearth">Astra Terra for Earth</a> the local time is the solar time its sky follows, so noon is when the sun stands highest.</li>
   <li><strong>Useful markers:</strong> place and edit the game's waypoints, filter prospecting readings by ore, and choose which marker layers to show. Optional automatic markers remember supported discoveries when you harvest them or look at them while sneaking.</li>
   <li><strong>Paper map sharing:</strong> draw a snapshot of your discoveries, hand it to another player and let them choose what to copy into their atlas.</li>
@@ -33,8 +33,9 @@
 <p>On worlds with a prediction provider, the server prepares a world chart in the background on first use. Allow time for it to finish; the chart and close-up detail are cached for later sessions. Creative mode can reveal the whole predicted chart. Survival keeps unexplored areas hidden; servers can also grant the <code>wmap</code> privilege for creative atlas access.</p>
 
 <h2>Settings and servers</h2>
-<p>Under <strong>Customize → Earth</strong>, Wmap adds <strong>Wmap: shared world chart</strong> and <strong>Wmap: explore by sight</strong>. Both are on by default in new worlds. Restart the world or server after changing them. Existing worlds without these choices retain their <code>ModConfig/wmap.json</code> settings. The Earth mod is not required for these Wmap settings.</p>
-<p><strong>For servers that need to keep unexplored terrain secret:</strong> turn shared world charts off. When sharing is on, predicted terrain is sent to clients and hidden by the exploration display; a modified client could reveal it. With sharing off, ordinary players receive their own recorded terrain, and prediction-based distant terrain is unavailable to them.</p>
+<p>Under <strong>Customize → Earth</strong>, Wmap adds <strong>Wmap: explore by sight</strong>, on by default in new worlds. Restart the world or server after changing it. The Earth mod is not required for this Wmap setting.</p>
+<p><strong>The unexplored map is for creative only.</strong> In survival, the predicted terrain of land you have not seen never reaches your game: the server works out what each player has seen and sends the chart, close-up detail and distant terrain of that land only, so a modified client cannot uncover the rest. Creative players, players with the <code>wmap</code> privilege and servers with <code>AllowAllPlayers</code> get the whole predicted map.</p>
+<p><strong>Start a new world for 0.5.4.</strong> Worlds made with earlier World Map versions are not supported.</p>
 <p>Advanced settings in <code>ModConfig/wmap.json</code> control exploration, styles, automatic markers, paper maps, winds, distant terrain, ore heat maps and cache sizes. Set <code>PredictTerrain</code> to <code>false</code> to use recorded terrain with an unsupported terrain generator.</p>
 
 <p>The Jonas barometer and blank map also appear in the shared <strong>Earth+</strong> creative tab, below Everything.</p>

@@ -15,7 +15,7 @@ parts:
 
 | Part | Where it lives | On the map |
 | --- | --- | --- |
-| Charted area | The drawer's client, `explored.wmx` (one byte per mask texel, 32+ blocks a texel) | The whole mask, deflated |
+| Charted area | The server's record of what the drawer has charted (from 0.5.4, WM-D63; before, the drawer's client, `explored.wmx`), one byte per mask texel, 32+ blocks a texel | The whole mask, deflated |
 | Recorded terrain | The drawer's client, `observed/<id>/1-<level>-x-z.wmt` | Every recorded tile, at every level |
 | Waypoints | The server (`WaypointMapLayer`) | The drawer's own waypoints, not temporary ones |
 | Automatic markers | The server: waypoints whose `Text` starts with `wmap-auto:` | As waypoints, ticked separately |
@@ -53,9 +53,12 @@ The architecture (section 6) says an item carries a document id, not a terrain b
 4. It stores the document, takes one blank map from the held stack, and gives the drawn map (into the slot when the
    stack was one, else into the inventory, else dropped at the player's feet).
 
-Terrain and charted area come from the drawer's client, as they do for the drawer's own atlas: a modified client could
-draw a false map. The server checks format only. This follows section 6: Wmap gives consistent mechanics, not
-protection from modified clients, and a paper map can lie as a real one can.
+Recorded terrain comes from the drawer's client, as it does for the drawer's own atlas: a modified client could draw false
+terrain, which reveals nothing it did not invent. The charted area comes from the server's record of what the drawer has
+charted (0.5.4, WM-D63), so a map cannot chart land its drawer has not seen; reading one charts the reader's area on the
+server, which then sends the reader's client the prediction there. Worlds from before 0.5.4 are not supported (WM-D63); a
+map without the server's record of its chart (one marked `serverCharted`) gives its terrain, waypoints and readings, not its
+chart.
 
 ## 4. Reading (import)
 

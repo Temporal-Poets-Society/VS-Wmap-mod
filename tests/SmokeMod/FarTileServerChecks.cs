@@ -61,7 +61,8 @@ public static class FarTileServerChecks
             return GuiServiceProxy.Default(method);
         });
         string cache = Path.Combine(Path.GetTempPath(), "wmap-far-stream-" + Guid.NewGuid().ToString("N"));
-        var config = new WmapConfig { ShareWorldChart = true };
+        // The full map: these check the stream itself (SurvivalChecks checks what a survival player gets, WM-D63).
+        var config = new WmapConfig { AllowAllPlayers = true };
         using var server = new AtlasServer(api, channel, config);
         var flags = BindingFlags.Instance | BindingFlags.NonPublic;
         void Field(string name, object value) => typeof(AtlasServer).GetField(name, flags).SetValue(server, value);

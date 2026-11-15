@@ -79,6 +79,17 @@ public static class BiomeTile
     /// (128 blocks), where tiles cover whole climate zones and nothing finer shows past the near band.</summary>
     public static int Stride(int level) => level >= 6 ? 2 : Math.Max(1, (int)(SampleBlocks / (1 << level)));
 
+    /// <summary>Samples per side of a tile at this stride (the last at or past the tile's last texel).</summary>
+    public static int Coarse(int stride) => (TileData.Padded - 1 + stride - 1) / stride + 1;
+
+    /// <summary>Along one axis, the first of the two samples a texel is interpolated from (texel <c>First · stride</c>) and
+    /// the weight of the second; <see cref="Core.RevealGate"/> blanks a texel any of whose samples is in land not seen.</summary>
+    public static (int First, double Weight) Between(int x, int stride, int coarse)
+    {
+        int c = Math.Min(x / stride, coarse - 2 < 0 ? 0 : coarse - 2);
+        return (c, coarse < 2 ? 0 : (x - c * stride) / (double)stride);
+    }
+
     /// <summary>The biome half alone (<see cref="ClimateRaster"/> and tests).</summary>
     public static byte[] Sample(Topology t, TileKey key, Func<double, double, BiomeSample> biome, CancellationToken token)
         => Sample(t, key, biome, null, token)[..HalfBytes];
@@ -88,7 +99,7 @@ public static class BiomeTile
     public static byte[] Sample(Topology t, TileKey key, Func<double, double, BiomeSample> biome, Func<double, double, SeasonSample> season, CancellationToken token)
     {
         const int n = TileData.Padded;
-        int stride = Stride(key.Level), coarse = (n - 1 + stride - 1) / stride + 1;
+        int stride = Stride(key.Level), coarse = Coarse(stride);
         var known = new bool[coarse * coarse];
         var values = new BiomeSample[coarse * coarse];
         var seasons = new SeasonSample[coarse * coarse];
@@ -114,8 +125,8 @@ public static class BiomeTile
         for (int z = 0; z < n; z++)
         for (int x = 0; x < n; x++)
         {
-            int cx = Math.Min(x / stride, coarse - 2 < 0 ? 0 : coarse - 2), cz = Math.Min(z / stride, coarse - 2 < 0 ? 0 : coarse - 2);
-            double fx = coarse < 2 ? 0 : (x - cx * stride) / (double)stride, fz = coarse < 2 ? 0 : (z - cz * stride) / (double)stride;
+            var (cx, fx) = Between(x, stride, coarse);
+            var (cz, fz) = Between(z, stride, coarse);
             double r = 0, g = 0, b = 0, weight = 0, share = 0, dry = 0, wetCos = 0, wetSin = 0;
             for (int k = 0; k < 4; k++)
             {

@@ -74,6 +74,8 @@ void main()
 {
     if (wmapDistance < wmapRange.x || wmapDistance > wmapRange.y) discard;
     if (wmapUV.y < 0.0 || wmapUV.y > 1.0 || (wmapRange.w < 0.5 && (wmapUV.x < 0.0 || wmapUV.x > 1.0))) discard;
+    // A survival client draws only land the server has sent it (0.5.4, WM-D63).
+    if (wmapKnownOn > 0.5 && textureLod(wmapKnown, wmapUV, 0.0).r < 0.5) discard;
     // Nearer than where the game's chunks end, only over chunk columns not loaded yet (0.5.0-pre.3, FarStart.Draws): far
     // terrain fills them while they load, and nowhere else covers the real terrain. From 0.5.3-rc.5 out to where the game
     // starts fading its blocks (0.8 of its view distance; before, 0.75), past which far terrain covers them (below).

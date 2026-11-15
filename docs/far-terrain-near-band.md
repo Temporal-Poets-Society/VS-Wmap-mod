@@ -92,7 +92,7 @@ Draw each cell as a flat top at a whole-block height, with vertical sides where 
 - **A separate request stream.** `AtlasServer.Request` keeps one `View` counter per player and drops older requests as obsolete. Near-band requests through the same counter would cancel the atlas's requests, and the other way round. The band needs its own view number (a new `TileRequest` field, or a separate packet), its own per-player cap (today 12 outstanding, a 64-job queue shared by everyone), and ordering nearest first.
 - **Priority under load.** Sampling is serialised by Earth's lock, so a full band for several new players at once queues for seconds. Order requests nearest first, and let the disk cache serve players near each other.
 - **Optional: heights-only tiles.** Dropping the coast-distance margin halves sampling, but coast distance then has to come from the chart or be computed on the client. Measure first.
-- **Permissions.** As for far terrain today: only with the world chart shared (`ShareWorldChart`) or the `wmap` privilege. It shows the predicted world and ignores exploration, like sight.
+- **Permissions.** As for far terrain: the full map gets every tile; from 0.5.4 a survival player gets tiles of land they have charted or have in view, blanked elsewhere (WM-D63).
 
 ## Recommendation
 

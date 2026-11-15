@@ -146,7 +146,7 @@ public sealed class WorldSource
             try { source.Rivers = EarthRivers(Member(model, "Rivers")); }
             catch (Exception e) { api.Logger.Warning("[wmap] Earth river courses unavailable; rivers are drawn from sampled water only: {0}", e.Message); }
         }
-        catch (Exception e) when (e is MissingMemberException or MissingMethodException or ArgumentException or InvalidCastException)
+        catch (Exception e) when (e is MissingMemberException or MissingMethodException or ArgumentException or InvalidCastException or AmbiguousMatchException)
         {
             // Earth's terrain could not be read (0.5.3, WM-0033): the atlas charts recorded terrain only, rather than not
             // starting at all; the geometry above stands.
@@ -191,12 +191,21 @@ public sealed class WorldSource
     {
         if (cylinder == null) return "";
         var saved = new SortedDictionary<string, object>(StringComparer.Ordinal);
-        foreach (var f in cylinder.GetType().GetFields(BindingFlags.Instance | BindingFlags.Public))
-            if (f.GetCustomAttributes(false).Any(a => a.GetType().Name == "ProtoMemberAttribute") && !f.Name.StartsWith("Mist", StringComparison.Ordinal) && !f.Name.StartsWith("JumpFog", StringComparison.Ordinal)
-                && f.Name != "WallBuildMargin")
-                saved[f.Name] = f.GetValue(cylinder);
+        var fields = cylinder.GetType().GetFields(BindingFlags.Instance | BindingFlags.Public);
+        // Cylinder World marks the settings that shape no terrain with [RuntimeSetting] (after 1.1.0-rc.4, WM-0045); older
+        // versions are known by their names.
+        bool marked = fields.Any(f => RuntimeSetting(f));
+        foreach (var f in fields)
+        {
+            if (!f.GetCustomAttributes(false).Any(a => a.GetType().Name == "ProtoMemberAttribute")) continue;
+            bool runtime = marked ? RuntimeSetting(f)
+                : f.Name.StartsWith("Mist", StringComparison.Ordinal) || f.Name.StartsWith("JumpFog", StringComparison.Ordinal) || f.Name == "WallBuildMargin";
+            if (!runtime) saved[f.Name] = f.GetValue(cylinder);
+        }
         return JsonConvert.SerializeObject(saved);
     }
+
+    static bool RuntimeSetting(FieldInfo f) => f.GetCustomAttributes(false).Any(a => a.GetType().Name == "RuntimeSettingAttribute");
 
     /// <summary>Terra Prety's settings (TerraPrety.json) shape its continents; a change must re-chart the world.</summary>
     static string ForeignConfig(ICoreServerAPI api, object terraPrety)
@@ -265,7 +274,9 @@ public sealed class WorldSource
             var coverage = data?.GetType().GetMethod("GlacierCoverage", new[] { typeof(double), typeof(double) });
             var glaciers = Bool(data, "HasGlaciers") && coverage != null
                 ? (System.Func<double, double, double>)coverage.CreateDelegate(typeof(System.Func<double, double, double>), data) : null;
-            var method = model.GetType().GetMethod("ClimateAt");
+            // By its signature (0.5.4, WM-0047): by name alone an overload would throw AmbiguousMatchException and stop the atlas.
+            var outDouble = typeof(double).MakeByRefType();
+            var method = model.GetType().GetMethod("ClimateAt", new[] { typeof(double), typeof(double), outDouble, outDouble, outDouble });
             var climate = method == null ? null : (Climate)method.CreateDelegate(typeof(Climate), model);
             var vertical = Member(model, "Vertical");
             return new(position, glaciers, climate, (int)Need(vertical, "SeaLevel", "Earth"), (int)Need(vertical, "MapHeight", "Earth"));

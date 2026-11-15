@@ -40,6 +40,9 @@ public sealed class PaperMapServer
     readonly IServerNetworkChannel channel;
     readonly WmapConfig config;
     readonly System.Func<Topology> topology;
+    readonly ExplorationServer exploration;
+    /// <summary>The drawn item's attribute: its charted area is the server's record (0.5.4, WM-D63).</summary>
+    const string ServerCharted = "serverCharted";
     /// <summary>The slot a player draws or reads from: the active hotbar slot. The smoke check's players have no inventory.</summary>
     public System.Func<IServerPlayer, ItemSlot> Held = p => p.InventoryManager?.ActiveHotbarSlot;
     /// <summary>Tells a player what happened, in chat.</summary>
@@ -63,9 +66,11 @@ public sealed class PaperMapServer
     volatile bool ended;
     int rotation;
 
-    public PaperMapServer(ICoreServerAPI api, IServerNetworkChannel channel, WmapConfig config, System.Func<Topology> topology)
+    /// <param name="exploration">The server's record of what each player has charted (WM-D63): a drawing's charted area comes
+    /// from it, not from the drawer's client, and a reader's grows by it.</param>
+    public PaperMapServer(ICoreServerAPI api, IServerNetworkChannel channel, WmapConfig config, System.Func<Topology> topology, ExplorationServer exploration = null)
     {
-        this.api = api; this.channel = channel; this.config = config; this.topology = topology;
+        this.api = api; this.channel = channel; this.config = config; this.topology = topology; this.exploration = exploration;
         Background = (work, done) => Task.Run(() =>
         {
             object result;
@@ -181,20 +186,30 @@ public sealed class PaperMapServer
         var (w, h) = ExploredMask.Dimensions(t);
         // The generation when the drawing was admitted: a player who left since, even before this ran, gets nothing.
         int generation = upload.Generation;
+        string uid = player.PlayerUID;
+        bool charted = ((MapParts)upload.Draw.Parts & MapParts.All).HasFlag(MapParts.Charted);
         Background(() =>
         {
+            PaperMap map;
             try
             {
-                if (upload.Draw.Total == 0) return new PaperMap();
-                byte[] data = new byte[upload.Draw.Total];
-                for (int i = 0; i < upload.Pieces.Length; i++) Buffer.BlockCopy(upload.Pieces[i], 0, data, i * MapPiece.Size, upload.Pieces[i].Length);
-                upload.Pieces = null;
-                var map = PaperMap.Read(data, t, w, h);
-                // The check unpacked the charted area and counted it (ChartedTexels): the main thread need not again.
-                map.MaskTexels = null;
-                return map;
+                if (upload.Draw.Total == 0) map = new PaperMap();
+                else
+                {
+                    byte[] data = new byte[upload.Draw.Total];
+                    for (int i = 0; i < upload.Pieces.Length; i++) Buffer.BlockCopy(upload.Pieces[i], 0, data, i * MapPiece.Size, upload.Pieces[i].Length);
+                    upload.Pieces = null;
+                    map = PaperMap.Read(data, t, w, h);
+                    map.MaskTexels = null;
+                }
             }
             finally { Release(upload); }
+            // The client gives only what only it has. Its charted area is not taken (0.5.4, WM-D63): the server's own record of
+            // what the drawer has charted is drawn instead, so a client cannot draw land it has not seen. Made here, off the
+            // main thread: a byte for every cell of the grid, deflated.
+            map.Mask = null; map.ChartedTexels = -1;
+            if (charted && exploration?.ChartedMask(uid, out int cells) is { } mask) { map.Mask = mask; map.ChartedTexels = cells; }
+            return map;
         }, result =>
         {
             // The player left (or the server stopped) while it was checked.
@@ -212,8 +227,7 @@ public sealed class PaperMapServer
         if (!Is(slot, BlankCode)) { Tell(player, "Wmap: hold a blank map to draw on."); return; }
         var parts = (MapParts)draw.Parts & MapParts.All;
         map.Parts = parts;
-        // The client gives only what only it has.
-        if (!parts.HasFlag(MapParts.Charted)) map.Mask = null;
+        // The charted area is the server's record, drawn in Uploaded.
         if (!parts.HasFlag(MapParts.Terrain)) map.Tiles.Clear();
         map.Waypoints.Clear(); map.Readings.Clear();
         if ((parts & (MapParts.Waypoints | MapParts.AutoMarks)) != 0 && Waypoints is { } layer)
@@ -242,7 +256,10 @@ public sealed class PaperMapServer
         var item = api.World.GetItem(new AssetLocation("wmap", DrawnCode));
         if (item == null) return;
         var stack = new ItemStack(item);
-        Describe(stack.Attributes.GetOrAddTreeAttribute(Attribute), id, map, topology());
+        var description = stack.Attributes.GetOrAddTreeAttribute(Attribute);
+        Describe(description, id, map, topology());
+        // Its charted area is the server's record (WM-D63): a reader's grows by it. Maps drawn before hold a client's.
+        description.SetBool(ServerCharted, true);
         slot.TakeOut(1);
         if (slot.Empty) slot.Itemstack = stack;
         else if (player.InventoryManager?.TryGiveItemstack(stack, true) != true && player.Entity != null) api.World.SpawnItemEntity(stack, player.Entity.Pos.XYZ);
@@ -300,6 +317,7 @@ public sealed class PaperMapServer
         readAt[uid] = now;
         int sequence = reads[uid] = (reads.TryGetValue(uid, out int previous) ? previous : 0) + 1;
         double km2 = description.GetDouble("km2");
+        bool serverCharted = description.GetBool(ServerCharted);
         byte[] bytes = api.WorldManager.SaveGame.GetData(PaperMap.SaveKey(read.Id));
         var t = topology();
         if (bytes == null || t == null) { Tell(player, "Wmap: this map has faded; nothing on it can be read."); return; }
@@ -309,23 +327,29 @@ public sealed class PaperMapServer
         {
             var map = PaperMap.Read(bytes, t, mw, mh, check: false);
             var parts = (MapParts)read.Parts & map.Holds;
-            var client = map.Only(parts & MapParts.Client);
-            return (map, parts, client, client.Mask != null || client.Tiles.Count > 0 ? client.Write() : null);
+            // A map drawn from the server's record charts the reader's area on the server too (WM-D63); the reader's client
+            // gets the cells and the prediction from there, so the map's charted area is not sent to it.
+            // Its cells are listed here, off the main thread (a byte for every cell of the grid).
+            int[] cells = serverCharted && parts.HasFlag(MapParts.Charted) && map.Mask != null ? exploration?.CellsOf(Client.ExploredMask.Unpack(map.Mask, mw, mh)) : null;
+            map.MaskTexels = null;
+            var client = map.Only(parts & MapParts.Client & ~MapParts.Charted);
+            return (map, parts, client, client.Tiles.Count > 0 ? client.Write() : null, cells);
         }, result =>
         {
             // The player left, or read another map since (that one's download must not be replaced).
             if (ended || Generation(uid) != generation || reads.GetValueOrDefault(uid) != sequence) return;
-            if (result is not ValueTuple<PaperMap, MapParts, PaperMap, byte[]> parsed) { Tell(player, "Wmap: this map has faded; nothing on it can be read."); return; }
-            var (map, parts, client, data) = parsed;
+            if (result is not ValueTuple<PaperMap, MapParts, PaperMap, byte[], int[]> parsed) { Tell(player, "Wmap: this map has faded; nothing on it can be read."); return; }
+            var (map, parts, client, data, cells) = parsed;
             var copied = new List<string>();
             int waypoints = AddWaypoints(player, map.Waypoints.Where(w => parts.HasFlag(w.Auto ? MapParts.AutoMarks : MapParts.Waypoints)).ToList(), out int full);
             if (waypoints > 0) copied.Add($"{waypoints} waypoints");
             int readings = parts.HasFlag(MapParts.Readings) ? AddReadings(player, map.Readings) : 0;
             if (readings > 0) copied.Add($"{readings} prospecting readings");
+            if (cells != null) { exploration?.Merge(player, cells); copied.Add($"{km2:0.#} km² of chart"); }
+            else if (parts.HasFlag(MapParts.Charted) && map.Mask != null && !serverCharted) copied.Add("not its chart (drawn before World Map 0.5.4)");
             if (data != null)
             {
                 downloads[uid] = new Download { Player = player, Id = read.Id, Data = data };
-                if (client.Mask != null) copied.Add($"{km2:0.#} km² of chart");
                 if (client.Tiles.Count > 0) copied.Add($"{client.Tiles.Count} terrain tiles");
             }
             string text = copied.Count == 0 ? "nothing new" : string.Join(", ", copied);

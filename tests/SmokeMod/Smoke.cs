@@ -110,6 +110,7 @@ public sealed class Smoke : ModSystem
                     string checks = ClientPipelineChecks.Run(Path.Combine(output, "client-pipeline"));
                     checks += "\n" + ServerAccessChecks.Run(source);
                     checks += "\n" + FarTileServerChecks.Run(source, locate);
+                    checks += "\n" + SurvivalChecks.Run(api, source, raster, locate);
                     checks += "\n" + CacheIdentityChecks.Run(api, source);
                     checks += "\n" + PolarChecks.Run(api, source);
                     checks += "\n" + SeamBandChecks.Run(api);

@@ -31,7 +31,6 @@ public sealed partial class FarTerrain : IRenderer
     readonly FarTerrainDraw draw = new();
     readonly FarFrame frame = new();
     readonly Task<FarMesh> building;
-    readonly SeaWater water;
     readonly bool wantBand, wantClimate;
     FarTiles tiles;
     /// <summary>The near band and climate tiles, while the server provides them; null otherwise.</summary>
@@ -58,6 +57,7 @@ public sealed partial class FarTerrain : IRenderer
     public FarTerrain(ICoreClientAPI api, WmapClient client)
     {
         this.api = api; this.client = client;
+        explored = client.Info?.Explored == true;
         var config = client.Config;
         if (!config.FarTerrain) { Status = "off"; return; }
         if (api.Event == null || api.Shader == null) { Status = "off: no renderer"; return; }
@@ -71,7 +71,6 @@ public sealed partial class FarTerrain : IRenderer
         // The near band needs finer rings near the camera; beyond 2048 blocks the mesh is the normal one.
         double distance = config.FarTerrainDistance, cell = wantBand ? FarMesh.NearBandCell : FarMesh.CellFor(config.FarTerrainDetail);
         building = Task.Run(() => FarMesh.Build(distance, cell));
-        water = new SeaWater(api);
         api.Event.ReloadShader += LoadShader;
         LoadShader();
         api.Event.RegisterRenderer(this, EnumRenderStage.Opaque, "wmap-far-terrain");
@@ -137,26 +136,43 @@ public sealed partial class FarTerrain : IRenderer
     bool CanDraw(out EntityPlayer player)
     {
         player = null;
-        if (disposed || failed || program == null) return false;
+        if (disposed || failed) return false;
+        if (program == null) return Not("waiting for its shader");
         if (!draw.Ready)
         {
             if (building == null || !building.IsCompleted) return false;
-            if (!building.IsCompletedSuccessfully) { failed = true; Status = "off: " + building.Exception?.InnerException?.Message; return false; }
+            if (!building.IsCompletedSuccessfully)
+            {
+                failed = true;
+                api.Logger.Error("[wmap] Far terrain could not build its mesh: {0}", building.Exception?.InnerException);
+                return Not("off: " + building.Exception?.InnerException?.Message);
+            }
             draw.Upload(building.Result);
             api.Logger.Notification("[wmap] Far terrain: {0} rings to {1} blocks, {2} vertices, {3} triangles, {4:0.0} MiB.",
                 draw.Mesh.Rings, draw.Mesh.Radius, draw.Mesh.VertexCount, draw.Mesh.Indices.Length / 3, draw.Bytes / 1048576.0);
         }
         var renderer = client.Renderer;
         player = api.World.Player?.Entity;
-        if (!renderer.BaseReady || player == null || player.Pos.Dimension != 0) { if (!renderer.BaseReady) Status = "waiting for the world chart"; return false; }
         // A land/sea mask with invented heights would raise flat plates of land on the horizon,
         // also where another generator (Terra Prety) put mountains or sea.
-        if (client.Info?.FlatPrediction == true) { Status = "off: the world chart has no relief (approximate continents)"; return false; }
+        if (client.Info?.FlatPrediction == true) return Not("off: the world chart has no relief (approximate continents)");
         // The chart drawn unmasked on the horizon shows terrain no one has charted: only while the server shares it.
         // A chart downloaded in creative stays for the atlas, which masks it in gameplay.
-        if (client.Info?.CanPredict != true) { Status = "off: the server does not share its world chart with you"; return false; }
+        if (client.Info?.CanPredict != true) return Not("off: the server does not share its world chart with you");
+        if (!renderer.BaseReady) return Not("waiting for the world chart");
+        if (player == null || player.Pos.Dimension != 0) return false;
         Status = OnStatus(Status);
         return true;
+    }
+
+    /// <summary>Far terrain is not drawn this frame, for this reason: kept in <see cref="Status"/> and logged when it changes, so a
+    /// far view that stays empty says why in the client log.</summary>
+    bool Not(string why)
+    {
+        if (Status == why) return false;
+        Status = why;
+        api.Logger.Notification("[wmap] Far terrain: {0}.", why);
+        return false;
     }
 
     /// <summary>This frame's values (<see cref="frame"/>): the camera and its matrices, where far terrain starts, the loaded
@@ -176,6 +192,10 @@ public sealed partial class FarTerrain : IRenderer
         frame.HeightScale = info.MapHeight > info.SeaLevel ? info.MapHeight - info.SeaLevel : 200;
         frame.HeightRange = info.ChartHeightRange;
         frame.ChartTexture = renderer.BaseTexture;
+        // A survival client draws only land the server has sent (WM-D63). So does a client that has just left survival, until
+        // the whole chart has come: the renderer still holds its chart, whose other texels are not the world's (WmapClient.Follow).
+        frame.KnownTexture = renderer.KnownTexture;
+        frame.Explored = frame.KnownTexture != 0;
         frame.BlocksPerTexel = renderer.BaseTexel;
         // Where the game's chunks end: 0.75 of the view distance; nearer only over chunk columns not loaded yet (FarStart,
         // a mask the shaders read).
@@ -200,7 +220,6 @@ public sealed partial class FarTerrain : IRenderer
         (frame.MaskX, frame.MaskZ) = FarStart.MaskOffset(loadedScanX, loadedScanZ, cam.X, cam.Z);
         frame.Far = far;
         frame.PlanetRadius = info.PlanetRadius; frame.CurveFrom = view;
-        frame.Water = water.Color;
         var ambient = api.Ambient;
         Copy(ambient.BlendedFogColor, frame.FogColor);
         frame.FogDensity = ambient.BlendedFogDensity;
@@ -435,7 +454,10 @@ public sealed partial class FarTerrain : IRenderer
     public const double WaterBelowSeaLevel = 0.125;
 
     /// <summary>Whether this far terrain was made for the near band and climate tiles a manifest allows (always, when it is off).</summary>
-    public bool Matches(AtlasInfo info) => !registered || disposed || TilesFor(info, client.Config) == (wantBand, wantClimate);
+    public bool Matches(AtlasInfo info) => !registered || disposed || TilesFor(info, client.Config) == (wantBand, wantClimate) && info.Explored == explored;
+    /// <summary>Made for a survival client (0.5.4, WM-D63): far terrain draws only land the server has sent, and its tiles stay
+    /// off the shared disk cache.</summary>
+    readonly bool explored;
 
     /// <summary>Whether the near band and the climate tiles can be drawn with this server's manifest and these settings:
     /// a 0.4.0 server that shares predictions with relief; climate also needs its biome sampler (Earth Map).</summary>
@@ -471,8 +493,8 @@ public sealed partial class FarTerrain : IRenderer
         if (tiles == null)
         {
             var config = client.Config;
-            tiles = new FarTiles(client.Topology, info.Session, client.SendTileRequest, client.CacheFolder, config.DiskCacheMiB,
-                config.NearBandDistance, far, wantBand, wantClimate, info.BiomeId) { HeightRange = info.ChartHeightRange };
+            tiles = new FarTiles(client.Topology, info.Session, client.SendTileRequest, explored ? null : client.CacheFolder, config.DiskCacheMiB,
+                config.NearBandDistance, far, wantBand, wantClimate, info.BiomeId) { HeightRange = info.ChartHeightRange, Requestable = explored ? client.KnownAt : null };
             tiles.CreateTextures();
             api.Logger.Notification("[wmap] Far terrain tiles: near band {0} (to {1} blocks), climate {2}.",
                 tiles.Band != null ? "on" : "off", config.NearBandDistance, tiles.Climate != null ? "on" : "off");

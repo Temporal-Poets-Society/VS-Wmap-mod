@@ -77,7 +77,11 @@ public static class PaperMapChecks
             if (m.Name == "SendPacket" && args[0] is MapPiece p && args[1] is IServerPlayer[] { Length: 1 } to) toClient.Add((p, to[0]));
             return GuiServiceProxy.Default(m);
         });
-        var server = new PaperMapServer(api, serverChannel, config, () => t);
+        // What each player has charted is the server's record (0.5.4, WM-D63): a drawing takes the drawer's, a reading adds to
+        // the reader's.
+        using var exploration = new ExplorationServer(api, serverChannel, config, _ => false);
+        exploration.Start(info, 0, false);
+        var server = new PaperMapServer(api, serverChannel, config, () => t, exploration);
         var slots = new Dictionary<string, ItemSlot>();
         var told = new List<string>();
         server.Held = p => slots.TryGetValue(p.PlayerUID, out var s) ? s : null;
@@ -123,6 +127,10 @@ public static class PaperMapChecks
             using var tilesA = new TileClient(DispatchProxy.Create<IClientNetworkChannel, FakeChannel>(), info, config, Path.Combine(folder, "cache-a"), dirA);
             var maskA = new ExploredMask(t);
             maskA.Reveal(500, 300, 100);
+            exploration.Hello(a); exploration.Hello(b);
+            var chartedA = (byte[])maskA.Data.Clone();
+            for (int i = 0; i < chartedA.Length; i++) chartedA[i] = chartedA[i] > 0 ? (byte)255 : (byte)0;
+            exploration.Merge(a, exploration.CellsOf(chartedA));
             var sentA = new List<object>();
             var clientA = new PaperMapClient(tilesA, maskA, GuiServiceProxy.Make<IClientNetworkChannel>((m, args) => { if (m.Name == "SendPacket") sentA.Add(args[0]); return GuiServiceProxy.Default(m); }), text => told.Add("client a: " + text));
             Wait(() => { tilesA.Tick(); return tilesA.RecordingCount == 2; }, "A's recordings indexed");
@@ -171,7 +179,8 @@ public static class PaperMapChecks
             var bReadings = ores.getOrLoadReadings(b);
             if (bReadings.Count != 1 || bReadings[0].Guid == reading.Guid || !(bReadings[0].OreReadings.TryGetValue("nativecopper", out var ore) && Math.Abs(ore.TotalFactor - 0.3) < 1e-9))
                 throw new Exception($"B's readings: {bReadings.Count}");
-            if (!(maskB.At(500, 300) > 0) || maskB.At(1500, 900) != 0) throw new Exception("B's charted area is not A's");
+            var chartedB = ExploredMask.Unpack(exploration.ChartedMask(b.Uid, out _) ?? throw new Exception("B charted nothing from A's map"), maskB.Width, maskB.Height);
+            if (chartedB[maskB.Cell(500, 300)] != 255 || chartedB[maskB.Cell(1500, 900)] != 0) throw new Exception("B's charted area is not A's");
             var bCoarse = tilesB.Get(coarse)?.Data ?? throw new Exception("B's four-block recording is not loaded");
             if (bCoarse.Heights[ownCell] != 150 || bCoarse.Kinds[filledCell] != TileData.Land || bCoarse.Heights[filledCell] != 130) throw new Exception("B's own cell must stay and A's fill the rest");
             if (!tilesB.HasObservation(fine) || tilesB.Get(fine)?.Data?.Heights[filledCell] != 130) throw new Exception("B did not get A's block-by-block recording");

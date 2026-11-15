@@ -6,7 +6,8 @@ namespace Wmap;
 public static class WmapProtocol
 {
     public const string Channel = "wmap-v2";
-    public const int Version = 2;
+    /// <summary>3 from 0.5.4 (WM-D63): survival clients get the prediction only for land they have seen.</summary>
+    public const int Version = 3;
 }
 
 [ProtoContract]
@@ -94,6 +95,10 @@ public sealed class AtlasInfo
     [ProtoMember(41)] public string OreHeatMethod;
     /// <summary>A copy, for one player's info (AtlasServer.SendInfo): the shared one is never changed per player.</summary>
     public AtlasInfo Copy() => (AtlasInfo)MemberwiseClone();
+    /// <summary>Survival (0.5.4, WM-D63): the prediction comes only for land this player has seen, as
+    /// <see cref="ExploreUpdate"/> and <see cref="ChartPatch"/> messages, never the whole chart; tiles of unseen land come
+    /// back empty. <see cref="BaseWidth"/> and <see cref="BaseHeight"/> give the chart's size.</summary>
+    [ProtoMember(44)] public bool Explored;
     public double ChartHeightRange => HeightRange > 0 ? HeightRange : Semantic.DefaultHeightRange;
     public const string EarthGeography = "earth";
     public Topology Topology() => new() { StartX = StartX, Width = Width, Height = Height, Wraps = Wraps };
@@ -132,10 +137,16 @@ public sealed class TileResponse
     [ProtoMember(7)] public string Error;
     /// <summary><see cref="Error"/> when the server's workers were all busy: ask again shortly (servers from 0.4.4).</summary>
     public const string Busy = "busy";
+    /// <summary>A survival player asked for a tile of land they have not seen (0.5.4, WM-D63): nothing is sent; ask again
+    /// once some of it is charted or in view.</summary>
+    public const string Unexplored = "unexplored";
     [ProtoMember(8)] public int Stream;
     [ProtoMember(9)] public int Content;
     /// <summary>A packed <see cref="Core.BiomeTile"/> when <see cref="Content"/> asks for one.</summary>
     [ProtoMember(10)] public byte[] Biome;
+    /// <summary>The tile was cut to the land a survival player has seen (0.5.4, WM-D63): it depends on what they have seen,
+    /// so a client keeps it in memory only, never in its disk cache, and drops it once it has the full map.</summary>
+    [ProtoMember(11)] public bool Gated;
 }
 
 /// <summary>A creative player's right-click on the atlas: teleport to this world position (blocks).</summary>
@@ -224,6 +235,29 @@ public sealed class OreHeatResponse
     /// <summary>The coarse tiles the server stores ahead of time, and how many of them it has.</summary>
     [ProtoMember(10)] public int Stored;
     [ProtoMember(11)] public int StoredOf;
+}
+
+/// <summary>Cells of the exploration grid (<see cref="MaskGrid"/>) the player has charted (0.5.4, WM-D63), as
+/// <see cref="CellSet.Pack"/> writes them: since the last update, or all of them when <see cref="Reset"/>.</summary>
+[ProtoContract]
+public sealed class ExploreUpdate
+{
+    [ProtoMember(1)] public string Session;
+    [ProtoMember(2)] public byte[] Cells;
+    [ProtoMember(3)] public bool Reset;
+}
+
+/// <summary>A block of the world chart (or the climate raster) holding only land the player has seen
+/// (<see cref="RevealGate.PackBlock"/>; 0.5.4, WM-D63). A block replaces what the client holds there; it starts from an
+/// empty raster whenever its manifest turns <see cref="AtlasInfo.Explored"/> on.</summary>
+[ProtoContract]
+public sealed class ChartPatch
+{
+    [ProtoMember(1)] public string Session;
+    [ProtoMember(2)] public bool Climate;
+    [ProtoMember(3)] public int BlockX;
+    [ProtoMember(4)] public int BlockZ;
+    [ProtoMember(5)] public byte[] Data;
 }
 
 [ProtoContract]

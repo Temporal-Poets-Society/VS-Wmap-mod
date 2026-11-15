@@ -28,28 +28,22 @@ public sealed class ExploredMask
     int dirtyX0 = int.MaxValue, dirtyZ0 = int.MaxValue, dirtyX1, dirtyZ1;
     public bool Unsaved { get; private set; }
 
+    /// <summary>The mask's geometry (cells, line of sight), shared with the server's record of exploration (WM-D63).</summary>
+    public readonly MaskGrid Grid;
+
     public ExploredMask(Topology t)
     {
-        topology = t; Wraps = t.Wraps;
-        (Width, Height) = Dimensions(t);
-        TexelX = t.Width / Width; TexelZ = t.Height / Height;
-        Texel = Math.Max(TexelX, TexelZ);
+        topology = t; Grid = new MaskGrid(t); Wraps = Grid.Wraps;
+        Width = Grid.Width; Height = Grid.Height;
+        TexelX = Grid.TexelX; TexelZ = Grid.TexelZ; Texel = Grid.Texel;
         Data = new byte[Width * Height];
     }
 
-    /// <summary>The mask's size in texels for a world: texels of 32 blocks or more, at most 8192 on a side.</summary>
-    public static (int Width, int Height) Dimensions(Topology t)
-    {
-        double nominal = Math.Max(32, Math.Ceiling(Math.Max(t.Width, t.Height) / 8192));
-        return (Math.Max(1, (int)Math.Ceiling(t.Width / nominal)), Math.Max(1, (int)Math.Ceiling(t.Height / nominal)));
-    }
+    /// <summary>The mask's size in texels for a world (<see cref="MaskGrid.Dimensions"/>).</summary>
+    public static (int Width, int Height) Dimensions(Topology t) => MaskGrid.Dimensions(t);
 
     /// <summary>The texel holding a world position (any lap), or -1 outside the world. Thread-safe.</summary>
-    public int Cell(double x, double z)
-    {
-        int ix = (int)Math.Floor((topology.Canonical(x) - topology.StartX) / TexelX), iz = (int)Math.Floor(z / TexelZ);
-        return ix < 0 || iz < 0 || ix >= Width || iz >= Height ? -1 : iz * Width + ix;
-    }
+    public int Cell(double x, double z) => Grid.Cell(x, z);
 
     public double At(double x, double z)
     {
@@ -107,83 +101,17 @@ public sealed class ExploredMask
         if (x1 >= 0) Dirty(x0, z0, x1 + 1, z1 + 1);
     }
 
-    /// <summary>The distinct texels line of sight sees from an eye at x, z (<see cref="Viewshed.Cast"/>): rays sample the
-    /// near ground many times over, so cells are collected once here, on the caller's thread, instead of every sample
-    /// going to the main thread. Thread-safe: it reads only the mask's geometry.</summary>
-    /// <param name="holeCells">Hidden patches of at most this many texels that the sight's own cells and the charted ones
-    /// enclose are charted too (0: none). A patch reaching the sight's edge stays hidden: it may be the start of more.</param>
+    /// <summary>The distinct texels line of sight sees from an eye at x, z (<see cref="MaskGrid.SightCells"/>), charted
+    /// texels counting as seen when they enclose a hidden patch. Thread-safe: it reads the mask while the main thread may
+    /// chart it, and a texel charted meanwhile only makes a patch smaller.</summary>
     public int[] SightCells(HeightGrid heights, double x, double z, double eye, double distance, double step, int holeCells = 0, double radius = 0)
-    {
-        // Seen cells lie within distance (plus a cell) of the eye: a bounded window, wrapping around the ring.
-        int rx = (int)Math.Ceiling(distance / TexelX) + 2, rz = (int)Math.Ceiling(distance / TexelZ) + 2;
-        double rel = topology.Wraps ? Topology.Mod(x - topology.StartX, topology.Width) : x - topology.StartX;
-        int cx = (int)Math.Floor(rel / TexelX), cz = (int)Math.Floor(z / TexelZ), side = 2 * rx + 1;
-        var seen = new bool[side * (2 * rz + 1)];
-        var cells = new List<int>();
-        Viewshed.Cast(heights, x, z, eye, distance, step, (px, pz) =>
-        {
-            int i = Cell(px, pz);
-            if (i < 0) return;
-            int ix = i % Width, iz = i / Width, dx = ix - cx;
-            if (topology.Wraps) dx -= (int)Math.Round((double)dx / Width) * Width;
-            int lx = dx + rx, lz = iz - cz + rz;
-            if (lx < 0 || lz < 0 || lx >= side || lz > 2 * rz) { cells.Add(i); return; }
-            int k = lz * side + lx;
-            if (seen[k]) return;
-            seen[k] = true; cells.Add(i);
-        }, radius);
-        if (holeCells > 0) FillHoles(seen, side, 2 * rz + 1, rx, rz, cx, cz, distance, holeCells, cells);
-        return cells.ToArray();
-    }
+        => Grid.SightCells(heights, x, z, eye, distance, step, i => Data[i] == 255, holeCells, radius);
 
-    /// <summary>Adds to <paramref name="cells"/> the hidden patches of the sight window (4-connected) that lie within the
-    /// sight's reach, touch neither its edge nor the world's, and have at most <paramref name="limit"/> texels. Texels
-    /// already charted count as seen, so a patch between this sight and earlier ones is enclosed too. It reads the mask
-    /// while the main thread may chart it: a texel charted meanwhile only makes a patch smaller.</summary>
-    void FillHoles(bool[] seen, int side, int rows, int rx, int rz, int cx, int cz, double distance, int limit, List<int> cells)
+    /// <summary>Uncharts everything (the server is about to send all the player has charted, WM-D63).</summary>
+    public void Clear()
     {
-        int Index(int lx, int lz)
-        {
-            int ix = cx + lx - rx, iz = cz + lz - rz;
-            if (iz < 0 || iz >= Height) return -1;
-            if (Wraps) ix = (int)Topology.Mod(ix, Width);
-            else if (ix < 0 || ix >= Width) return -1;
-            return iz * Width + ix;
-        }
-        // Within reach: the texel's centre no further than the sight goes.
-        bool Inside(int lx, int lz)
-        {
-            double dx = (lx - rx) * TexelX, dz = (lz - rz) * TexelZ;
-            return dx * dx + dz * dz <= distance * distance && Index(lx, lz) >= 0;
-        }
-        var visited = new bool[seen.Length];
-        var patch = new List<int>();
-        var queue = new Queue<int>();
-        for (int start = 0; start < seen.Length; start++)
-        {
-            if (visited[start] || seen[start]) continue;
-            int sx = start % side, sz = start / side;
-            int startCell = Index(sx, sz);
-            if (!Inside(sx, sz) || Data[startCell] == 255) { visited[start] = true; continue; }
-            patch.Clear(); queue.Clear();
-            bool open = false;
-            visited[start] = true; queue.Enqueue(start);
-            while (queue.Count > 0)
-            {
-                int k = queue.Dequeue(), lx = k % side, lz = k / side;
-                patch.Add(k);
-                for (int d = 0; d < 4; d++)
-                {
-                    int nx = lx + (d == 0 ? 1 : d == 1 ? -1 : 0), nz = lz + (d == 2 ? 1 : d == 3 ? -1 : 0);
-                    if (nx < 0 || nz < 0 || nx >= side || nz >= rows || !Inside(nx, nz)) { open = true; continue; }
-                    int n = nz * side + nx;
-                    if (visited[n] || seen[n] || Data[Index(nx, nz)] == 255) continue;
-                    visited[n] = true; queue.Enqueue(n);
-                }
-            }
-            if (open || patch.Count > limit) continue;
-            foreach (int k in patch) cells.Add(Index(k % side, k / side));
-        }
+        Array.Clear(Data);
+        Dirty(0, 0, Width, Height);
     }
 
     public void Merge(byte[] other)

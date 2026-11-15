@@ -57,13 +57,11 @@ public sealed class PaperMapClient
     {
         if (Drawing) { tell("Wmap: still drawing the last map."); return; }
         var map = new PaperMap { Parts = parts };
-        byte[] maskData = parts.HasFlag(MapParts.Charted) ? (byte[])mask.Data.Clone() : null;
-        int w = mask.Width, h = mask.Height;
+        // The charted area is drawn from the server's record of what this player has charted (0.5.4, WM-D63), not uploaded.
         var recordings = parts.HasFlag(MapParts.Terrain) ? tiles.SnapshotRecordings() : null;
         drawing = new MapDraw { Id = Guid.NewGuid().ToString("N"), Title = title, Parts = (int)parts };
         packing = Task.Run(() =>
         {
-            if (maskData != null && Array.Exists(maskData, v => v > 0)) map.Mask = ExploredMask.Pack(maskData, w, h);
             if (recordings != null) map.Tiles.AddRange(recordings());
             return map.Mask == null && map.Tiles.Count == 0 ? Array.Empty<byte>() : map.Write();
         });

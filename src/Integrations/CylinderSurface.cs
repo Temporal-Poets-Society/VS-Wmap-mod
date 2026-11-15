@@ -29,7 +29,9 @@ public sealed class CylinderSurface
     readonly Func<double, double, int> earthIceRise, earthSnow;
     readonly int earthIceCap;
 
-    static int Number(object p, string name) => Convert.ToInt32(WorldSource.Member(p, name));
+    // A number Cylinder World must have: a renamed one is named (0.5.4, WM-0048), not read as 0.
+    static int Number(object p, string name) => Convert.ToInt32(WorldSource.Member(p, name)
+        ?? throw new MissingMemberException($"Cylinder World has no {name} on {p.GetType().FullName}; this World Map needs it"));
     // Cylinder World's methods are found by name and parameter types (0.5.3: by name alone, GetMethod threw
     // AmbiguousMatchException the day one of them gained an overload; Cylinder World review 14 Nov 2026, CW-0012).
     static MethodInfo Find(object p, string name, params Type[] types) =>

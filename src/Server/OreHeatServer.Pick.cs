@@ -101,6 +101,8 @@ public sealed partial class OreHeatServer
             earthRock = (System.Func<double, double, int, int, int>)regional.CreateDelegate(typeof(System.Func<double, double, int, int, int>), geology);
             var floor = geology.GetType().Assembly.GetType("EarthMap.EarthWorldGen")?.GetMethod("RockFloorTop", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static, null, new[] { typeof(int), typeof(int) }, null);
             if (floor != null && floor.ReturnType == typeof(int)) earthFloor = (System.Func<int, int, int>)floor.CreateDelegate(typeof(System.Func<int, int, int>));
+            // Said, not silent (0.5.4, WM-0048): without it columns where Earth keeps vanilla strata are scanned from y 1.
+            else api.Logger.Warning("[wmap] Ore heat maps: Earth's RockFloorTop(int, int) was not found; columns where Earth keeps vanilla strata are read from the bottom up");
         }
         catch (Exception e) { earthRock = null; earthFloor = null; api.Logger.Warning("[wmap] Ore heat maps: Earth's rock strata could not be read ({0}); columns where Earth keeps vanilla strata may read low", e.Message); }
     }

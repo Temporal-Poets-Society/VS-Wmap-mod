@@ -48,7 +48,8 @@ public sealed class BaseMapClient : IDisposable
         int bytes = climate ? info.ClimateBytes : info.BaseBytes;
         if (wanted == null)
         {
-            Status = !climate && (info.HasOverview || info.CanPredict) ? (info.BaseProgress > 0 ? $"Charting the world… {info.BaseProgress:P0}" : "Charting the world…") : "";
+            // A survival client gets the chart in blocks of land it has seen, never whole (WM-D63): no download to report.
+            Status = !climate && !info.Explored && (info.HasOverview || info.CanPredict) ? (info.BaseProgress > 0 ? $"Charting the world… {info.BaseProgress:P0}" : "Charting the world…") : "";
             return;
         }
         if (wanted == id || !System.Text.RegularExpressions.Regex.IsMatch(wanted, "^[a-f0-9]{64}$")) return;
@@ -74,6 +75,13 @@ public sealed class BaseMapClient : IDisposable
     }
 
     static string Hash(byte[] data) => Convert.ToHexString(SHA256.HashData(data)).ToLowerInvariant();
+
+    /// <summary>Drops a download or decode in progress and the raster's id (a client turning survival, WM-D63): with the full map
+    /// again it starts over from the manifest (or its file on disk).</summary>
+    public void Forget()
+    {
+        id = null; buffer = null; arrived = null; requestedAt = null; received = 0; decoding = null; Progress = 0; Status = "";
+    }
 
     public void Receive(BaseChunk chunk)
     {

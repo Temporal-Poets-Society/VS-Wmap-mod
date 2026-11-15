@@ -50,24 +50,19 @@ public static class ServerAccessChecks
         object jobs = typeof(AtlasServer).GetField("jobs", flags).GetValue(server);
         int Queued() => (int)jobs.GetType().GetProperty("Count").GetValue(jobs);
         var request = new TileRequest { Session = source.Info.Session, View = 1, Level = source.Info.Topology().MaxLevel };
-        config.ShareWorldChart = false;
+        // 0.5.4 (WM-D63): an ordinary player gets the game chart and the prediction only for land they have seen: no whole
+        // chart, no full map; their requests are taken and answered for seen land only (SurvivalChecks).
         server.Hello(player, new AtlasHello());
-        if (received == null || !received.Allowed || received.CanDevelop || received.HasOverview || received.CanPredict)
-            throw new Exception("Ordinary player must receive gameplay access without prediction capability");
+        if (received == null || !received.Allowed || received.CanDevelop || received.HasOverview || received.BaseId != null
+            || received.CanPredict != source.Info.HasOverview || received.Explored != source.Info.HasOverview)
+            throw new Exception("Ordinary player must receive gameplay access with the prediction of seen land only");
         var ordinary = received;
         server.Request(player, request);
-        if (Queued() != 0) throw new Exception("Server accepted an unprivileged prediction request");
-        config.ShareWorldChart = true;
-        server.Hello(player, new AtlasHello());
-        if (received.CanDevelop || received.HasOverview || received.CanPredict != source.Info.HasOverview)
-            throw new Exception("A shared world chart must allow predicted detail but not development");
-        server.Request(player, request);
-        if (Queued() != (source.Info.HasOverview ? 1 : 0)) throw new Exception("Shared world chart request handling failed");
-        config.ShareWorldChart = false;
+        if (Queued() != (source.Info.HasOverview ? 1 : 0)) throw new Exception("An ordinary player's request for seen land was not taken");
         int queued = Queued();
         player.Privileged = true;
         server.Hello(player, new AtlasHello());
-        if (!received.Allowed || !received.CanDevelop || received.HasOverview != source.Info.HasOverview)
+        if (!received.Allowed || !received.CanDevelop || received.HasOverview != source.Info.HasOverview || received.Explored)
             throw new Exception("Developer did not receive overview capability");
         if (ordinary.CanDevelop || ordinary.HasOverview) throw new Exception("One player's permissions changed another manifest");
         server.Request(player, request);
@@ -77,18 +72,16 @@ public static class ServerAccessChecks
         player.Privileged = false;
         SetGameMode(player, EnumGameMode.Survival);
         server.Hello(player, new AtlasHello());
-        if (received.CanDevelop || received.HasOverview) throw new Exception("A survival player received the full map");
+        if (received.CanDevelop || received.HasOverview || received.Explored != source.Info.HasOverview) throw new Exception("A survival player received the full map");
         // 0.4.5: nor a single-player host in survival (0.4.4 granted it with controlserver).
         player.Host = true;
         server.Hello(player, new AtlasHello());
         player.Host = false;
         if (received.CanDevelop || received.HasOverview) throw new Exception("A single-player host in survival received the full map");
-        queued = Queued();
-        server.Request(player, request);
-        if (Queued() != queued) throw new Exception("Server accepted a survival player's prediction request");
         SetGameMode(player, EnumGameMode.Creative);
+        queued = Queued();
         server.Hello(player, new AtlasHello());
-        if (!received.CanDevelop || received.HasOverview != source.Info.HasOverview) throw new Exception("A creative player did not receive the full map");
+        if (!received.CanDevelop || received.HasOverview != source.Info.HasOverview || received.Explored) throw new Exception("A creative player did not receive the full map");
         server.Request(player, request);
         if (Queued() != queued + (source.Info.HasOverview ? 1 : 0)) throw new Exception("Server rejected a creative player's prediction request");
         SetGameMode(player, EnumGameMode.Survival);
@@ -98,7 +91,7 @@ public static class ServerAccessChecks
         CheckReadyAnnouncement();
         string busy = CheckBusy(source);
         string budget = busy + "; " + CheckChartBudget();
-        return "Server permissions: PASS (ordinary gameplay, unshared prediction denial, shared world chart, privileged development, isolated manifests, survival denied (a host too) and creative granted the full map, AllowAllPlayers; chart-ready announcement after 100% bake progress; " + budget + ")";
+        return "Server permissions: PASS (ordinary gameplay with the prediction of seen land only, privileged development, isolated manifests, survival denied (a host too) and creative granted the full map, AllowAllPlayers; chart-ready announcement after 100% bake progress; " + budget + ")";
     }
 
     /// <summary>0.4.4: with the workers' queue full (many players at once), a request is answered "busy" at once instead of
@@ -150,7 +143,7 @@ public static class ServerAccessChecks
             if (method.Name == "SendPacket" && args[0] is BaseChunk chunk) sent.Add(chunk.Offset);
             return GuiServiceProxy.Default(method);
         });
-        using var server = new AtlasServer(api, channel, new WmapConfig());
+        using var server = new AtlasServer(api, channel, new WmapConfig { AllowAllPlayers = true });
         var flags = BindingFlags.Instance | BindingFlags.NonPublic;
         void Field(string name, object value) => typeof(AtlasServer).GetField(name, flags).SetValue(server, value);
         string id = new string('b', 64);
@@ -189,7 +182,7 @@ public static class ServerAccessChecks
             if (method.Name == "SendPacket" && args[0] is BaseChunk && args.Length > 1 && args[1] is IServerPlayer[] { Length: 1 } to) received[Array.IndexOf(players, to[0])]++;
             return GuiServiceProxy.Default(method);
         });
-        using var server = new AtlasServer(api, channel, new WmapConfig());
+        using var server = new AtlasServer(api, channel, new WmapConfig { AllowAllPlayers = true });
         var flags = BindingFlags.Instance | BindingFlags.NonPublic;
         void Field(string name, object value) => typeof(AtlasServer).GetField(name, flags).SetValue(server, value);
         string id = new string('c', 64);
@@ -221,7 +214,7 @@ public static class ServerAccessChecks
             if (method.Name == "SendPacket" && args[0] is AtlasInfo info) manifests.Add(info);
             return GuiServiceProxy.Default(method);
         });
-        using var server = new AtlasServer(api, channel, new WmapConfig());
+        using var server = new AtlasServer(api, channel, new WmapConfig { AllowAllPlayers = true });
         var flags = BindingFlags.Instance | BindingFlags.NonPublic;
         void Field(string name, object value) => typeof(AtlasServer).GetField(name, flags).SetValue(server, value);
         Field("source", new WorldSource { Info = new AtlasInfo { Session = "ready", HasOverview = true } });
@@ -279,6 +272,24 @@ public static class CacheIdentityChecks
         var flatten = config?.GetType().GetField("FlattenSeabed");
         if (flatten == null) throw new Exception("Cylinder World config has no FlattenSeabed");
         object flat = flatten.GetValue(config);
+        // From Cylinder World 1.1.0 (CW-0011) a world saves FlattenSeabed (FlattenSeabedFrozen): World Map reads the world's own
+        // value there (WM-0043), and the config no longer changes the world.
+        var frozen = p.GetType().GetField("FlattenSeabedFrozen");
+        var saved = p.GetType().GetField("FlattenSeabed");
+        if (frozen?.GetValue(p) is true && saved != null)
+        {
+            object was = saved.GetValue(p);
+            try
+            {
+                flatten.SetValue(config, !(bool)flat);
+                if (WorldSource.Create(api, new WmapConfig()).Info.CacheId != first) throw new Exception("The config's FlattenSeabed changed the cache of a world that saved its own");
+                flatten.SetValue(config, flat);
+                saved.SetValue(p, !(bool)was);
+                if (WorldSource.Create(api, new WmapConfig()).Info.CacheId == first) throw new Exception("The world's saved FlattenSeabed did not change the prediction cache");
+            }
+            finally { flatten.SetValue(config, flat); saved.SetValue(p, was); }
+            return "Cache identity: PASS (stable across starts and sea-ice dates; the world's saved FlattenSeabed changes it, the config's no longer does; PredictTerrain off keeps topology)";
+        }
         try
         {
             flatten.SetValue(config, false);

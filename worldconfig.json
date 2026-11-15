@@ -3,13 +3,6 @@
   "worldConfigAttributes": [
     {
       "category": "earth",
-      "code": "wmapSharedChart",
-      "dataType": "Bool",
-      "default": "true",
-      "onlyDuringWorldCreate": false
-    },
-    {
-      "category": "earth",
       "code": "wmapExploreBySight",
       "dataType": "Bool",
       "default": "true",

@@ -30,7 +30,8 @@ foreach (bool? worldSight in new bool?[] { null, false, true })
     if (worldShared.HasValue) world["wmapSharedChart"] = worldShared.Value;
     if (worldSight.HasValue) world["wmapExploreBySight"] = worldSight.Value;
     config.ApplyWorldOptions((key, fallback) => world.TryGetValue(key, out bool value) ? value : fallback);
-    Check(config.ShareWorldChart == (worldShared ?? shared), "world chart override / old-world fallback");
+    // The shared world chart is no longer a world choice (0.5.4, WM-D63): a world that still has the key changes nothing.
+    Check(config.ShareWorldChart == shared, "a world's old shared-chart choice is ignored");
     Check(config.ExploreBySight == (worldSight ?? sight), "world sight override / old-world fallback");
     Check(config.SightDistance == 4096 && config.AllowAllPlayers, "world choices preserve other server settings");
     Check(world.Count == (worldShared.HasValue ? 1 : 0) + (worldSight.HasValue ? 1 : 0), "world choices do not populate missing keys");
@@ -40,8 +41,8 @@ using (var lang = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Comb
 {
     Check(options.RootElement.GetProperty("playStyles").GetArrayLength() == 0, "world options retain non-null empty playStyles");
     var attributes = options.RootElement.GetProperty("worldConfigAttributes").EnumerateArray().ToArray();
-    Check(attributes.Length == 2, "only the two Wmap world choices");
-    foreach (string key in new[] { "wmapSharedChart", "wmapExploreBySight" })
+    Check(attributes.Length == 1, "only the one Wmap world choice (the shared chart left in 0.5.4)");
+    foreach (string key in new[] { "wmapExploreBySight" })
     {
         var attribute = attributes.Single(a => a.GetProperty("code").GetString() == key);
         Check(attribute.GetProperty("category").GetString() == "earth", "world choice in Earth tab");
@@ -1445,6 +1446,329 @@ Check(partial[119 * DayGrid.Width] == 0 && partial[120 * DayGrid.Width] == 132 &
     Check(OreHeat.WordIndex(0.025) == -1 && OreHeat.WordIndex(0.026) == 0 && OreHeat.WordIndex(0.14) == 1 && OreHeat.WordIndex(0.3) == 2 && OreHeat.WordIndex(5) == 5, "pick words");
     Check(OreHeat.Short(0.44) == "0.4" && OreHeat.Short(130.2) == "130" && OreHeat.Short(2400) == "2.4k" && OreHeat.Short(18000) == "18k", "short block counts");
 }
+// What a survival client may be sent (0.5.4, WM-D63): the server's record of exploration and its gate.
+{
+    var world = new Topology { StartX = 25600, Width = 204800, Height = 102400, Wraps = true };
+    var grid = new MaskGrid(world);
+    Check(grid.Width == 6400 && grid.Height == 3200 && grid.TexelX == 32 && grid.TexelZ == 32, "mask grid: 32-block cells on a 204,800-block ring");
+    Check(grid.Cell(world.StartX + 40, 70) == 2 * grid.Width + 1 && grid.CellRelative(40, 70) == 2 * grid.Width + 1, "mask grid: world and relative positions find the same cell");
+    Check(grid.CellRelative(world.Width + 40, 70) == grid.CellRelative(40, 70) && grid.CellRelative(-world.Width + 40, 70) == grid.CellRelative(40, 70), "mask grid: any lap of the ring");
+    Check(grid.CellRelative(40, -1) == -1 && grid.CellRelative(40, world.Height) == -1, "mask grid: off the world's north and south edges");
+    var disc = grid.Disc(world.StartX + 1000, 1000, 100);
+    Check(disc.Count > 20 && disc.Count < 50 && disc.Contains(grid.Cell(world.StartX + 1000, 1000)), "mask grid: a 100-block disc holds about 31 cells and its own");
+    var ring = grid.WithNeighbours(new[] { 5 * grid.Width, 5 * grid.Width + 1, 0 });
+    Check(ring.Count == ring.Distinct().Count() && ring.Contains(4 * grid.Width + grid.Width - 1) && ring.Contains(6 * grid.Width + 2)
+        && ring.Contains(grid.Width - 1) && ring.Contains(grid.Width) && !ring.Any(c => c < 0) && ring.Count == 12 + 6,
+        $"mask grid: cells and those beside them, once each, across the seam and not past the north edge ({ring.Count})");
+    var seam = grid.Disc(world.StartX + 10, 1000, 64);
+    Check(seam.Any(cell => cell % grid.Width == grid.Width - 1) && seam.Any(cell => cell % grid.Width == 0), "mask grid: a disc on the seam wraps around the ring");
+
+    var set = new CellSet(grid.Width, grid.Height);
+    var added = new List<int>();
+    Check(set.Add(5) && !set.Add(5) && set.Contains(5) && !set.Contains(6) && set.Count == 1, "cell set: add once, contains");
+    Check(set.AddRange(new[] { 6, 7, 5, grid.Width * 100 + 4000 }, added) == 3 && added.Count == 3 && !added.Contains(5), "cell set: the new cells of a range");
+    Check(!set.Add(-1) && !set.Add(grid.Width * grid.Height) && set.Count == 4, "cell set: cells outside the grid are ignored");
+    Check(set.AnyIn(4, 0, 6, 1) && !set.AnyIn(8, 0, 20, 1) && set.AnyIn(4000, 100, 4001, 101), "cell set: any in a rectangle");
+    Check(new CellSet(10, 4) is var small && small.Add(9) && small.AnyIn(-1, 0, 0, 1) && small.AnyIn(9, 0, 11, 1), "cell set: a rectangle past the edge wraps");
+    Check(set.AnyIn(-100000, 0, 100000, grid.Height) && set.AnyIn(3990, 90, 4010, 110) && !set.AnyIn(3990, 90, 4000, 100) && !set.AnyIn(4000, 100, 4000, 101),
+        "cell set: a rectangle wider than the grid, around a cell, beside it, and empty");
+    Check(new CellSet(200, 4) is var wide && wide.Add(199) && wide.Add(64) && wide.AnyIn(198, 0, 202, 1) && wide.AnyIn(-2, 0, 0, 1) && !wide.AnyIn(0, 0, 64, 4) && wide.AnyIn(60, 0, 65, 4),
+        "cell set: rectangles across the seam and across a block edge");
+    var copy = set.Clone();
+    copy.Add(9);
+    Check(copy.Count == 5 && set.Count == 4 && !set.Contains(9) && copy.Contains(grid.Width * 100 + 4000), "cell set: a copy is its own");
+    Check(set.Missing(new[] { 5, 9, 9, 8, -3, 5 }).SequenceEqual(new[] { 9, 8 }), "cell set: the cells not in it, each once");
+    var boxes = set.Boxes();
+    Check(boxes.Count == 2 && boxes.Contains((5, 0, 8, 1)) && boxes.Contains((4000, 100, 4001, 101)), "cell set: one rectangle per block round its cells");
+    var round = CellSet.Unpack(set.Pack(), grid.Width, grid.Height);
+    Check(round.Count == 4 && round.Contains(5) && round.Contains(7) && round.Contains(grid.Width * 100 + 4000) && !round.Contains(8), "cell set: packed and unpacked");
+    Check(round.Cells().OrderBy(cell => cell).SequenceEqual(set.Cells().OrderBy(cell => cell)), "cell set: the same cells after packing");
+    Reject(() => CellSet.Unpack(set.Pack(), grid.Width + 1, grid.Height), "cell set: another grid's set is refused");
+    Reject(() => CellSet.Unpack(set.Pack()[..20], grid.Width, grid.Height), "cell set: a cut set is refused");
+    var edge = new CellSet(100, 70);
+    edge.Add(99); edge.Add(69 * 100 + 99);
+    var edgeRound = CellSet.Unpack(edge.Pack(), 100, 70);
+    Check(edgeRound.Count == 2 && edgeRound.Contains(99) && edgeRound.Contains(69 * 100 + 99), "cell set: partial blocks at the grid's edges");
+
+    // A semantic tile of level 2 (4-block texels, 512 blocks) at the world's start: 16 x 16 cells of 32 blocks.
+    var key = new TileKey(0, 2, 0, 0);
+    var semantic = new byte[TileData.Padded * TileData.Padded * 4];
+    for (int i = 0; i < semantic.Length; i++) semantic[i] = 200;
+    var none = (byte[])semantic.Clone();
+    Check(!RevealGate.Semantic(none, key, grid, _ => false) && none.All(b => b == 0), "survival: a tile of land never seen goes back with nothing in it");
+    var known = new CellSet(grid.Width, grid.Height);
+    known.Add(grid.CellRelative(100, 100));
+    var one = (byte[])semantic.Clone();
+    Check(RevealGate.Semantic(one, key, grid, known.Contains), "survival: a tile with one seen cell is sent");
+    int kept = 0, wrong = 0, spread = 0;
+    for (int z = 0; z < TileData.Padded; z++)
+    for (int x = 0; x < TileData.Padded; x++)
+    {
+        int o = (z * TileData.Padded + x) * 4;
+        bool inCell = known.Contains(grid.CellRelative((x - 0.5) * 4, (z - 0.5) * 4));
+        if (one[o + 3] != 0) kept++;
+        if ((one[o + 3] != 0) != inCell) wrong++;
+        // A blanked texel holds nothing, or a seen texel's values two texels out at most (filtering at the edge).
+        if (!inCell && (one[o] | one[o + 1] | one[o + 2]) != 0)
+        {
+            bool copied = false;
+            for (int dz = -2; dz <= 2 && !copied; dz++)
+            for (int dx = -2; dx <= 2; dx++)
+            {
+                int nx = x + dx, nz = z + dz;
+                if (nx < 0 || nz < 0 || nx >= TileData.Padded || nz >= TileData.Padded) continue;
+                int no = (nz * TileData.Padded + nx) * 4;
+                if (one[no + 3] != 0 && one[no] == one[o] && one[no + 1] == one[o + 1] && one[no + 2] == one[o + 2]) { copied = true; break; }
+            }
+            if (copied) spread++; else wrong++;
+        }
+    }
+    Check(kept == 64 && wrong == 0 && spread == 12 * 12 - 64, $"survival: only the seen cell's 8 x 8 texels are sent, its values spread two texels into the blank ({kept} kept, {spread} spread, {wrong} wrong)");
+    var biome = new byte[2 * BiomeTile.HalfBytes];
+    for (int i = 0; i < biome.Length; i++) biome[i] = 77;
+    Check(!RevealGate.Biome(biome, key, grid, _ => false), "survival: a biome tile of land never seen is not sent");
+    // Biome tiles interpolate between samples (stride 2 from level 6): a texel goes only when all its samples are seen.
+    var coarseKey = new TileKey(0, 6, 1, 1);
+    Func<int, bool> westHalf = cell => cell >= 0 && (cell % grid.Width + 0.5) * grid.TexelX < coarseKey.X * coarseKey.Span + 63 * coarseKey.Step;
+    var coarseBiome = new byte[2 * BiomeTile.HalfBytes];
+    for (int i = 0; i < coarseBiome.Length; i++) coarseBiome[i] = 99;
+    var cw = RevealGate.Window(coarseKey, grid, westHalf);
+    RevealGate.Biome(coarseBiome, cw);
+    int keptOdd = 0, keptEdge = 0;
+    for (int z = 1; z < TileData.Padded; z++)
+    for (int x = 0; x < TileData.Padded; x++)
+    {
+        int o = (z * TileData.Padded + x) * 4;
+        if (coarseBiome[o + 3] == 0) continue;
+        // Texel x is interpolated from samples at texels 2 * (x / 2) and the next: both must lie west of texel 63.5.
+        double east = (Math.Min(x / 2, (BiomeTile.Coarse(2) - 2)) + 1) * 2 - 0.5;
+        if (x % 2 == 1 && east >= 63) keptOdd++;
+        if (x >= 63) keptEdge++;
+    }
+    Check(cw.Any && keptOdd == 0 && keptEdge == 0, $"survival: no coarse biome texel is made from a sample not seen ({keptOdd}, {keptEdge})");
+    // At every level's stride (16 at level 0 down to 1, then 2): two worlds that differ only in land not seen give the same
+    // gated biome and season bytes.
+    var levelsSame = new List<string>();
+    for (int level = 0; level <= 8; level++)
+    {
+        var lk = new TileKey(0, level, 3, 2);
+        double tileEdge = lk.X * lk.Span + 0.6 * lk.Span;   // seen west of 60% of the tile, every row
+        Func<int, bool> seenPart = cell => cell >= 0 && (cell % grid.Width + 0.5) * grid.TexelX < tileEdge;
+        BiomeSample Plain(double x, double z) => new(100, 120, 140);
+        BiomeSample Other(double x, double z) => seenPart(grid.Cell(x, z)) ? new(100, 120, 140) : new(220, 20, 250);
+        SeasonSample PlainSeason(double x, double z) => new(200, 0, 128, 128);
+        SeasonSample OtherSeason(double x, double z) => seenPart(grid.Cell(x, z)) ? new(200, 0, 128, 128) : new(97, 255, 10, 240);
+        var b1 = BiomeTile.Sample(world, lk, Plain, PlainSeason, default);
+        var b2 = BiomeTile.Sample(world, lk, Other, OtherSeason, default);
+        var lw = RevealGate.Window(lk, grid, seenPart);
+        RevealGate.Biome(b1, lw); RevealGate.Biome(b2, lw);
+        int sentTexels = 0;
+        for (int i = 3; i < BiomeTile.HalfBytes; i += 4) if (b1[i] != 0) sentTexels++;
+        if (!b1.SequenceEqual(b2) || sentTexels == 0) levelsSame.Add($"level {level} (stride {BiomeTile.Stride(level)}, {sentTexels} sent)");
+    }
+    Check(levelsSame.Count == 0, "survival: biome tiles at every stride say nothing of land not seen: " + string.Join(", ", levelsSame));
+    // A seen cell's biome and season spread two texels into the blank, coverage 0; farther out no biome and no season.
+    var spreadBiome = new byte[2 * BiomeTile.HalfBytes];
+    for (int i = 0; i < BiomeTile.HalfBytes; i += 4) { spreadBiome[i] = 40; spreadBiome[i + 1] = 50; spreadBiome[i + 2] = 60; spreadBiome[i + 3] = 255; }
+    for (int i = BiomeTile.HalfBytes; i < spreadBiome.Length; i += 4) { spreadBiome[i] = 204; spreadBiome[i + 1] = 0; spreadBiome[i + 2] = 99; spreadBiome[i + 3] = 150; }
+    RevealGate.Biome(spreadBiome, RevealGate.Window(key, grid, known.Contains));
+    int seasonSpread = 0, seasonWrong = 0;
+    for (int i = 0; i < TileData.Padded * TileData.Padded; i++)
+    {
+        int o = i * 4, s = BiomeTile.HalfBytes + o;
+        if (spreadBiome[o + 3] != 0) continue;
+        bool copied = spreadBiome[o] == 40 && spreadBiome[s] == 204 && spreadBiome[s + 2] == 99 && spreadBiome[s + 3] == 150;
+        // A copy lies within two texels of a texel sent whole.
+        if (copied)
+        {
+            int cx = i % TileData.Padded, cz = i / TileData.Padded;
+            bool near = false;
+            for (int dz = -2; dz <= 2 && !near; dz++)
+            for (int dx = -2; dx <= 2 && !near; dx++)
+            {
+                int nx = cx + dx, nz = cz + dz;
+                near = nx >= 0 && nz >= 0 && nx < TileData.Padded && nz < TileData.Padded && spreadBiome[(nz * TileData.Padded + nx) * 4 + 3] != 0;
+            }
+            if (!near) { seasonWrong++; continue; }
+        }
+        bool nothing = (spreadBiome[o] | spreadBiome[o + 1] | spreadBiome[o + 2]) == 0 && spreadBiome[s] == SeasonSample.None.Share && spreadBiome[s + 2] == SeasonSample.None.WetCos;
+        if (copied) seasonSpread++; else if (!nothing) seasonWrong++;
+    }
+    Check(seasonSpread > 0 && seasonWrong == 0, $"survival: a biome tile's season spreads with its biome, the rest none ({seasonSpread}, {seasonWrong} wrong)");
+    Check(biome.Take(BiomeTile.HalfBytes).All(b => b == 0)
+        && biome[BiomeTile.HalfBytes] == SeasonSample.None.Share && biome[BiomeTile.HalfBytes + 2] == SeasonSample.None.WetCos && biome[BiomeTile.HalfBytes + 3] == SeasonSample.None.WetSin,
+        "survival: a blanked biome texel has no biome and no season of its own");
+
+    // A survival client's chart extends its known texels into those it lacks: the nearest known within the reach, past it a
+    // neutral texel; wrapping east and west.
+    var holey = new BaseRaster { Width = 100, Height = 40, Rgba = new byte[100 * 40 * 4] };
+    var holeKnown = new byte[100 * 40];
+    void Know(int x, int z, byte r) { int i = z * 100 + x; holeKnown[i] = 255; holey.Rgba[i * 4] = r; holey.Rgba[i * 4 + 1] = 77; holey.Rgba[i * 4 + 3] = 255; }
+    for (int z = 10; z < 30; z++) { Know(2, z, 11); Know(50, z, 22); }
+    byte[] neutralTexel = { 255, 128, 0, 255 };
+    RevealGate.Extend(holey, holeKnown, 0, 0, 100, 40, true, 16, neutralTexel);
+    byte R(int x, int z) => holey.Rgba[(z * 100 + x) * 4];
+    Check(R(5, 20) == 11 && R(45, 20) == 22 && R(97, 20) == 11 && R(2, 20) == 11 && R(50, 20) == 22,
+        "survival: unknown texels take the nearest known one, across the seam too, and known ones stay");
+    Check(R(30, 20) == 255 && holey.Rgba[(20 * 100 + 30) * 4 + 1] == 128 && R(80, 20) == 255 && R(26, 0) == 255 && R(5, 0) == 11 && R(10, 20) == 11,
+        "survival: past the reach a texel is neutral land at the sea surface");
+    // As the client calls it: a block's rectangle and the reach round it, on a chart 5000 texels wide (its last block 8 texels),
+    // at the north edge and across the seam; texels made known later replace their extension.
+    var strip = new BaseRaster { Width = 5000, Height = 70, Rgba = new byte[5000 * 70 * 4] };
+    var stripKnown = new byte[5000 * 70];
+    void KnowStrip(int x, int z, byte r) { int i = z * 5000 + x; stripKnown[i] = 255; strip.Rgba[i * 4] = r; strip.Rgba[i * 4 + 3] = 255; }
+    for (int z = 0; z < 64; z++) KnowStrip(2, z, 33);
+    RevealGate.Extend(strip, stripKnown, -16, -16, 80, 80, true, 16, neutralTexel, out bool stripChanged);
+    byte S(int x, int z) => strip.Rgba[(z * 5000 + x) * 4];
+    Check(stripChanged && S(4995, 0) == 33 && S(4987, 5) == 33 && S(4980, 5) == 0 && S(10, 63) == 33 && S(40, 10) == 255,
+        "survival: a block's extension reaches across the seam into the block before the narrow last one, and stops at the reach");
+    RevealGate.Extend(strip, stripKnown, -16, -16, 80, 80, true, 16, neutralTexel, out bool again2);
+    KnowStrip(30, 10, 44);
+    RevealGate.Extend(strip, stripKnown, -16, -16, 80, 80, true, 16, neutralTexel, out bool newer);
+    Check(!again2 && newer && S(30, 10) == 44 && S(31, 10) == 44 && S(40, 10) == 44 && S(17, 10) == 44 && S(15, 10) == 33,
+        "survival: extending again changes nothing; a texel made known later takes over the texels nearer it");
+    var bounded = new BaseRaster { Width = 100, Height = 40, Rgba = new byte[100 * 40 * 4] };
+    var flatKnown = new byte[100 * 40];
+    flatKnown[20 * 100 + 1] = 255; bounded.Rgba[(20 * 100 + 1) * 4] = 9;
+    RevealGate.Extend(bounded, flatKnown, 0, 0, 100, 40, false, 16);
+    Check(bounded.Rgba[(20 * 100 + 3) * 4] == 9 && bounded.Rgba[(20 * 100 + 99) * 4] == 0, "survival: a bounded world does not wrap, and without a neutral texel the rest stays");
+
+    // The chart in blocks: 6400 x 3200 texels over this world (one per cell), a block of 64 x 64 texels.
+    var chart = new BaseRaster { Width = 6400, Height = 3200, Rgba = new byte[6400 * 3200 * 4] };
+    for (int i = 0; i < chart.Rgba.Length; i++) chart.Rgba[i] = (byte)(i % 251 + 1);
+    Check(RevealGate.PackBlock(chart, 0, 0, (x, z) => false) == null, "survival: a chart block of land never seen is not sent");
+    var seen = new CellSet(grid.Width, grid.Height);
+    foreach (int cell in new[] { 3 * grid.Width + 3, 3 * grid.Width + 4, 70 * grid.Width + 65 }) seen.Add(cell);
+    var client = new BaseRaster { Width = 6400, Height = 3200, Rgba = new byte[6400 * 3200 * 4] };
+    var clientKnown = new byte[6400 * 3200];
+    byte[] block00 = RevealGate.PackBlock(chart, 0, 0, (x, z) => RevealGate.Texel(x, z, 6400, 3200, grid, seen.Contains, false));
+    var change1 = RevealGate.ApplyBlock(block00, 0, 0, client, clientKnown);
+    int set1 = change1.Fresh;
+    int set2 = RevealGate.ApplyBlock(RevealGate.PackBlock(chart, 1, 1, (x, z) => RevealGate.Texel(x, z, 6400, 3200, grid, seen.Contains, false)), 1, 1, client, clientKnown).Fresh;
+    Check(change1.Changed && change1.X0 == 3 && change1.Z0 == 3 && change1.X1 == 5 && change1.Z1 == 4, "survival: a block's newly known texels and their bounds");
+    var again = RevealGate.ApplyBlock(block00, 0, 0, client, clientKnown);
+    Check(again.Fresh == 0 && !again.Changed, "survival: the same block again changes nothing");
+    client.Rgba[(3 * 6400 + 3) * 4] ^= 1;
+    var changed = RevealGate.ApplyBlock(block00, 0, 0, client, clientKnown);
+    Check(changed.Fresh == 0 && changed.Changed && client.Rgba[(3 * 6400 + 3) * 4] == chart.Rgba[(3 * 6400 + 3) * 4], "survival: a block with other values for known texels changes them, none newly known");
+    int leaked = 0;
+    for (int i = 0; i < clientKnown.Length; i++)
+    {
+        bool shouldKnow = seen.Contains(i);
+        if ((clientKnown[i] != 0) != shouldKnow) leaked++;
+        if (!shouldKnow && (client.Rgba[i * 4] | client.Rgba[i * 4 + 1] | client.Rgba[i * 4 + 2] | client.Rgba[i * 4 + 3]) != 0) leaked++;
+        if (shouldKnow && client.Rgba[i * 4] != chart.Rgba[i * 4]) leaked++;
+    }
+    Check(set1 == 2 && set2 == 1 && leaked == 0, $"survival: the chart's blocks carry exactly the seen texels ({set1}, {set2}, {leaked} wrong)");
+    Reject(() => RevealGate.ApplyBlock(new byte[] { 1, 2, 3 }, 0, 0, client, clientKnown), "survival: a damaged chart block is refused");
+    var blocks = new List<(int, int)>();
+    RevealGate.BlocksOfCell(70 * grid.Width + 65, grid, 6400, 3200, (bx, bz) => blocks.Add((bx, bz)));
+    Check(blocks.Contains((1, 1)), "survival: a cell's chart block is found");
+    // A chart 6420 texels wide: its last block holds 20 texels. A coast reach of 33 texels from the first cell reaches back
+    // over the seam into the block before it (L3 of the re-review).
+    var seamBlocks = new HashSet<(int, int)>();
+    RevealGate.BlocksOfCells(0, 10, 1, 11, grid, 6420, 3200, (bx, bz) => seamBlocks.Add((bx, bz)), 33);
+    Check(seamBlocks.Contains((100, 0)) && seamBlocks.Contains((99, 0)) && seamBlocks.Contains((0, 0)) && !seamBlocks.Contains((1, 0)) && !seamBlocks.Contains((98, 0)),
+        $"survival: blocks within reach across the seam ({string.Join(" ", seamBlocks.OrderBy(b => b))})");
+    var wideBlocks = new HashSet<(int, int)>();
+    RevealGate.BlocksOfCells(0, 10, 6400, 11, grid, 6420, 3200, (bx, bz) => wideBlocks.Add((bx, bz)), 33);
+    Check(wideBlocks.Count == 101, "survival: a rectangle round the world marks every block of its rows once");
+    // The climate raster is coarser than the cells: a texel goes once any part of it is seen.
+    Check(RevealGate.Texel(0, 0, 800, 400, grid, cell => cell == 7 * grid.Width + 7, true) && !RevealGate.Texel(0, 0, 800, 400, grid, cell => cell == 7 * grid.Width + 7, false),
+        "survival: a climate texel goes once one of its corners is seen; a chart texel only by its centre");
+
+    // Distances say nothing of land not seen (the review of 15 Nov 2026): a coast or river past seen land changes no byte sent.
+    // Tiles of level 2 (4-block texels, 8 to a 32-block cell) with a coast running north-south.
+    byte[] CoastTile(int coastX)
+    {
+        var kinds = new byte[TileData.Padded * TileData.Padded];
+        var heights = new short[kinds.Length];
+        for (int i = 0; i < kinds.Length; i++)
+        {
+            bool water = i % TileData.Padded < coastX;
+            kinds[i] = water ? TileData.Water : TileData.Land;
+            heights[i] = (short)(water ? -20 : 15);
+        }
+        return SemanticTile.Encode(kinds, heights, TileData.Padded, 0);
+    }
+    // Seen: the cells whose texels lie west of texel 57 (cells 0..6 east-west), every row.
+    Func<int, bool> west = cell => cell >= 0 && cell % grid.Width <= 6 && cell / grid.Width < 20;
+    var near1 = CoastTile(70);
+    var near2 = CoastTile(90);
+    bool r1 = RevealGate.Semantic(near1, key, grid, west), r2 = RevealGate.Semantic(near2, key, grid, west);
+    Check(r1 && r2 && near1.SequenceEqual(near2), "survival: a tile's coast distances do not tell where an unseen coast lies");
+    int farWater = 0, seenTexels = 0;
+    for (int i = 0; i < TileData.Padded * TileData.Padded; i++) if (near1[i * 4 + 3] != 0) { seenTexels++; if (near1[i * 4] == 0) farWater++; }
+    Check(seenTexels > 0 && farWater == seenTexels, $"survival: seen water whose coast is unseen reads as open sea ({farWater} of {seenTexels})");
+    // Seen on both sides of the coast: the distances near it are the true ones.
+    Func<int, bool> most = cell => cell >= 0 && cell % grid.Width <= 14 && cell / grid.Width < 20;
+    var whole = CoastTile(70);
+    var gated = (byte[])whole.Clone();
+    RevealGate.Semantic(gated, key, grid, most);
+    int same = 0, differ = 0;
+    for (int z = 0; z < TileData.Padded; z++)
+    for (int x = 45; x < 95; x++)
+    {
+        int o = (z * TileData.Padded + x) * 4;
+        if (gated[o + 3] == 0) continue; // the row north of the world's edge
+        if (gated[o] == whole[o]) same++; else differ++;
+    }
+    Check(differ == 0 && same == 50 * (TileData.Padded - 1), $"survival: coast distances of seen land near a seen coast are kept ({differ} differ, {same} same)");
+
+    // The chart: a block's coast and river distances are the same whatever lies in land not seen (texels x < 80 seen).
+    BaseRaster CoastChart(int coastX, bool river)
+    {
+        const int n = 256;
+        var r = new BaseRaster { Width = n, Height = n, Rgba = new byte[n * n * 4] };
+        Semantic.CoastField(r.Rgba, n, n, i => i % n < coastX ? (sbyte)1 : (sbyte)0, false);
+        for (int i = 0; i < n * n; i++)
+        {
+            int x = i % n;
+            r.Rgba[i * 4 + 1] = (byte)(x < coastX ? 100 : 160);
+            // A river 2 texels wide down x = 85, its bank distance within 12 texels of it.
+            double d = Math.Abs(x - 85) - 1;
+            r.Rgba[i * 4 + 3] = river && d < Semantic.RiverRange ? Semantic.EncodeSigned(d, Semantic.RiverRange) : (byte)255;
+        }
+        return r;
+    }
+    var chartA = CoastChart(100, true);
+    var chartB = CoastChart(120, false);
+    Func<int, int, bool> seenWest = (x, z) => x < 80;
+    bool blocksSame = true;
+    foreach (var (bx, bz) in new[] { (0, 0), (1, 0), (1, 1) })
+        blocksSame &= RevealGate.PackBlock(chartA, bx, bz, seenWest, chart: true).SequenceEqual(RevealGate.PackBlock(chartB, bx, bz, seenWest, chart: true));
+    Check(blocksSame, "survival: chart blocks do not tell where an unseen coast or river lies");
+    // Seen everywhere: distances within the coast reach are the chart's own, the river's too, the far value past the reach.
+    var full = new BaseRaster { Width = 256, Height = 256, Rgba = new byte[256 * 256 * 4] };
+    var fullKnown = new byte[256 * 256];
+    for (int bz = 0; bz < 4; bz++)
+    for (int bx = 0; bx < 4; bx++)
+        RevealGate.ApplyBlock(RevealGate.PackBlock(chartA, bx, bz, (x, z) => true, chart: true), bx, bz, full, fullKnown);
+    int coastWrong = 0, riverWrong = 0, saturated = 0;
+    for (int i = 0; i < 256 * 256; i++)
+    {
+        double d = Math.Abs(Semantic.DecodeSigned(chartA.Rgba[i * 4], Semantic.CoastRange));
+        if (d + 0.5 < RevealGate.CoastReach - 1) { if (full.Rgba[i * 4] != chartA.Rgba[i * 4]) coastWrong++; }
+        else if (d + 0.5 >= RevealGate.CoastReach + 1) { if (full.Rgba[i * 4] is not (0 or 255)) coastWrong++; else saturated++; }
+        if (full.Rgba[i * 4 + 3] != chartA.Rgba[i * 4 + 3]) riverWrong++;
+    }
+    Check(coastWrong == 0 && riverWrong == 0 && saturated > 0, $"survival: a chart seen whole keeps its coast within reach and its rivers ({coastWrong}, {riverWrong} wrong; {saturated} past the reach)");
+    // Seen up to the river: the river stops short of the unseen land.
+    var westChart = new BaseRaster { Width = 256, Height = 256, Rgba = new byte[256 * 256 * 4] };
+    var westKnown = new byte[256 * 256];
+    RevealGate.ApplyBlock(RevealGate.PackBlock(chartA, 1, 0, (x, z) => x < 90, chart: true), 1, 0, westChart, westKnown);
+    int riverTexels = 0, riverPast = 0;
+    for (int z = 0; z < 64; z++)
+    for (int x = 64; x < 90; x++)
+    {
+        byte a = westChart.Rgba[(z * 256 + x) * 4 + 3];
+        if (a == 255) continue;
+        riverTexels++;
+        // Every seen texel within the bank's distance and a texel more must be seen: x + distance + 1 < 90.
+        if (x + Math.Abs(Semantic.DecodeSigned(a, Semantic.RiverRange)) + 1 >= 90) riverPast++;
+    }
+    Check(riverTexels > 0 && riverPast == 0, $"survival: river distances only where seen land shows the bank ({riverTexels} texels, {riverPast} reaching past)");
+}
 // The far shaders' constants against C#'s (0.5.3, WM-0039): the shaders name them, and a change on one side fails here.
 {
     double ShaderConst(string file, string name)
@@ -1467,7 +1791,7 @@ if (failures.Count > 0)
     Console.WriteLine($"FAIL: {failures.Count} of {tests} assertions");
     return 1;
 }
-Console.WriteLine($"PASS: {tests} assertions (topology, camera, partial edges, coordinates, codecs, distance fields, world raster, rivers, detail selection, player arrow, wind layer, far terrain mesh, teleport columns, day grid, line of sight, recording levels, mask geometry, sight cells, ring copies, markers, paper maps, sight holes, heading, climate raster heights, ore heat maps, shader constants).");
+Console.WriteLine($"PASS: {tests} assertions (topology, camera, partial edges, coordinates, codecs, distance fields, world raster, rivers, detail selection, player arrow, wind layer, far terrain mesh, teleport columns, day grid, line of sight, recording levels, mask geometry, sight cells, ring copies, markers, paper maps, sight holes, heading, climate raster heights, ore heat maps, shader constants, survival exploration).");
 return 0;
 
 bool Throws(Action action) { try { action(); return false; } catch (Exception) { return true; } }

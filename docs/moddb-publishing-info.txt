@@ -1,9 +1,10 @@
 WORLD MAP (WMAP) - MOD DB PAGE DRAFT FOR THE NEXT RELEASE
-Updated 14 November 2026 (WM-0012). First prepared 31 October 2026 for 0.5.0.
+Updated 15 November 2026 (WM-0012, 0.5.4). First prepared 31 October 2026 for 0.5.0.
 The author keeps World Map in development (0.x); publishing is the author's, nothing here is uploaded.
 
 STILL OPEN BEFORE UPLOAD (the author's choices)
-- Version: 0.5.3, built 14 November 2026 (release/wmap_0.5.3.zip; its SHA-256 and size are below).
+- Version: 0.5.4, built 15 November 2026 (release/wmap_0.5.4.zip; its SHA-256 and size are below). If 0.5.3 is not on
+  the page yet (it was not on 14 November), the note below covers both; otherwise keep only its 0.5.4 part.
 - Source link: the repository andrisberzins-1/VS-Wmap-mod is private. Either make it public, or attach the
   matching source ZIP to each release (GPL-3.0 needs the source offered with the binary).
 - Issue link: there is no public issue tracker. Options: the repository's issues once it is public, or the Mod DB
@@ -37,24 +38,31 @@ Version: (next release; fill in)
 Game checked: Vintage Story 1.22.7 (the version the suite builds and tests against, 13 November 2026)
 Manifest minimum: game 1.22.0; no compatibility claim for other game versions.
 Required on client: yes. Required on server: yes. Client and server need the same version (network
-format changed in 0.5.2).
+format changed in 0.5.4: protocol 3).
+Old worlds: worlds made with earlier World Map versions are not supported by 0.5.4 (start a new world).
 Required companion mods: none
 Optional: Earth (predictions, far terrain, air pressure), Cylinder World (wrapping geography),
 Sea (wind charts), Astra Terra for Earth (local solar time in the coordinates box).
 Earth: craters and each region's grass seasons in the far view need an Earth with TerrainModel.GetSurfaceColumn
 and GrassSeasonAt (Earth 2.0.0); older Earths still work without them.
-Tested together on the bench, 14 November 2026: a test build of Earth 2.0.0 from Earth main (0e53278),
-Cylinder World 1.1.0-rc.4, Hydrology 0.6.2-rc.13; with Sea 0.6.0-rc.2 in the smoke test; Astra Terra for Earth
-0.15.0-dev.25 on 13 November. These are test builds; name only released versions on the page
-(Earth 2.0.0, Cylinder World 1.1.0, Hydrology 0.6.2, Sea 0.6.0).
+Tested together on the bench and in the smoke test, 15 November 2026: Earth 2.0.0, Cylinder World 1.1.1,
+Hydrology 0.6.2 and Sea 0.6.1 (all released); Astra Terra for Earth 0.15.0-dev.25 in the smoke test (a test build;
+name only released versions on the page).
 Install companion mods' own dependencies when using them.
 Runtime ZIP: release/wmap_<version>.zip
 Matching source ZIP: (to be made with the release)
-Runtime SHA-256 / size: e6671428a32090a7b2d05f6025d660d5c3f8c6715f9838d5d6a7b0e64c84cc6d / 396,342 bytes
-(release/wmap_0.5.3.zip built from main c232957 on 14 November 2026; a rebuild gives another hash)
+Runtime SHA-256 / size: 4d29ebcb0495c2a9e15ce20f4a55783288aa823556d2a799b28f915ed7426408 / 422,622 bytes
+(release/wmap_0.5.4.zip built from main 9cb51f6 on 15 November 2026; a rebuild gives another hash)
 
 RELEASE NOTE (draft: everything since 0.5.1)
-World Map 0.5.3 is a development release.
+World Map 0.5.4 is a development release.
+- The unexplored map is for creative only: in survival, the predicted terrain of land you have not seen never
+  reaches your game (the server works out what each player has seen), so a modified client cannot uncover it.
+  Creative players, the wmap privilege and AllowAllPlayers get the whole map. The "shared world chart" world
+  option is gone. Paper maps chart only what their drawer has seen.
+- Start a new world: worlds made with earlier World Map versions are not supported by 0.5.4.
+- World Map is sturdier against changes in Earth and Cylinder World, and says in the log what it could not read.
+Also in this release, since 0.5.1 (drop this part if 0.5.3 is on the page already):
 - The far view, with Earth: lit as the game lights its own land; the game's grass and leaf colours through
   the seasons (each region's own wet and dry seasons with a current Earth); no pale ring where your loaded
   chunks end; relief finer than the mesh; high ground coloured by its climate; volcano craters; land you have

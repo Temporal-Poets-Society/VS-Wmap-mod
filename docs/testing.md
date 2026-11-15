@@ -2,6 +2,47 @@
 
 Updated 2026-10-16. Test environment: Windows 11, Vintage Story 1.22.7, .NET SDK 8.0.419 and runtime 10.0, AMD Radeon RX 6600, 16-core/32-thread CPU.
 
+## 0.5.4: release build
+
+15 November 2026, worktree `explored` (branch `claude/survival-explored`), merged into `main`. The unexplored map only in
+creative (WM-0051, WM-D63) and the next release's small fixes (WM-0045, WM-0047 to WM-0049); release record WM-D64.
+
+* Core suite: **108876 assertions PASS** (survival exploration: the mask grid and cell sets; blanked tiles; the chart's
+  blocks; coast and river distances that are the same whatever lies in unseen land, for tiles and chart blocks; biome
+  tiles at every stride; the client's extension of its chart across the seam; the block ranges across a seam whose last
+  block is narrower than the reach).
+* Code reviews (Fable): the first of the whole change found coast and river distances telling of unseen land, a far view
+  that flickered as land became known, a fail-open path and server costs; the second found biome texels interpolated from
+  unseen samples and a far tile cached across a mode change; the third and fourth found no leak (an in-flight refresh, a
+  stale view after a restart, allocations, the seam). All fixed.
+* Earth smoke (isolated server; Earth 2.0.0 released, Cylinder World 1.1.1, Hydrology 0.6.2, Sea 0.6.1): **PASS** at
+  `3b08e2e` and `646782d`; survival exploration: after charting a 300-block disc, 11,458 tile texels sent and 22,342
+  blanked, 28 chart texels in 1 block, none outside it; coast distances from seen land only (9,372 tile texels checked; the
+  chart's coast distances equal to those the client's own seen texels give); 4 river texels within seen land.
+* Bench (my own, port 42487; a new 1:10 Earth world, Earth 2.0.0, Cylinder World 1.1.1, Hydrology 0.6.2, Sea 0.6.1;
+  northern and south-west Tasmania; `/bridge fly` makes the player creative, so the survival rule was checked as a
+  spectator and on foot in survival):
+  * creative: the whole atlas and the far view to the horizon, as before;
+  * spectator and survival: the atlas offers no Creative view and holds only the charted land (blank parchment beyond);
+    the far view draws only land seen: nothing on arriving over unseen land, filled in within 8 s; no flicker of the near
+    band while flying;
+  * found and fixed: a lake that was not there (a ring of water round a hole of sky where a hollow lies behind a ridge),
+    from the client's empty texels blended into seen land and from cells half in sight; after the fix the spectator's
+    view at the same place matches creative;
+  * game mode changes both ways, also several within seconds: the far view stays right while the whole chart comes again;
+  * no World Map warning or error in the client or server logs.
+* First release build from `main` `c3ec2e9` (422,765 bytes): core suite 108876 PASS; Earth smoke (Earth 2.0.0, Cylinder
+  World 1.1.1, Hydrology 0.6.2, Sea 0.6.1) **PASS**; tile client 2,467 bytes a tick with 256 samples.
+* Rebuilt after the author's answers (15 November: worlds from earlier versions are not supported, said in the CHANGELOG
+  and README) and README corrections found while writing the wiki (exploration kept by the server, far terrain in
+  survival, a map's charted area from the server, ore heat maps); code changed in comments only. Earth smoke on the
+  builds from `9b3c872` and `debb335`: **PASS**.
+* Final release build from `main` `9cb51f6`: 0 warnings, 0 errors; `release/wmap_0.5.4.zip`, 422,622 bytes, SHA-256
+  `4d29ebcb0495c2a9e15ce20f4a55783288aa823556d2a799b28f915ed7426408` (a rebuild gives another hash). Core suite 108876 PASS; Earth
+  smoke on this build: **PASS** (survival exploration included).
+* Not checked: multiplayer with two clients, NVIDIA or Intel GPUs, a 0.5.3 client against a 0.5.4 server in game (the
+  protocol check declines it; the smoke checks the messages).
+
 ## 0.5.3: release build
 
 14 November 2026, worktrees `relief`, `review` and `cwbind`, merged into `main`. After rc.14: recorded relief (WM-0021, WM-D61), the fixes of a code review of `main` (WM-0030 to WM-0042), Cylinder World bound by signatures (WM-0043), and two re-reviews of those fixes, the second with nothing open. Then the version became 0.5.3 (WM-D62).

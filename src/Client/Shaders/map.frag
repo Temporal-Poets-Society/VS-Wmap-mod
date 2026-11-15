@@ -18,7 +18,7 @@ uniform int uMode;        // 0 world raster, 1 detail tile, 2 player marker, 3 c
 uniform sampler2D uBase;
 uniform vec4 uBaseInfo;   // present, blocks per texel, texels wide, texels high
 uniform sampler2D uMask;
-uniform vec4 uMaskInfo;   // enabled, unused, unused, unused
+uniform vec4 uMaskInfo;   // enabled, coast reach of a survival client's chart (texels; 0: the codec's whole range), unused, unused
 uniform sampler2D uGeo;
 uniform vec4 uGeoInfo;    // present, meridian step (deg), parallel step (deg), unused
 uniform sampler2D uTile;
@@ -290,7 +290,10 @@ vec4 chart(Terrain t, vec2 offset, float reveal)
     octaves(offset, q0, q1, ot);
     float wobble = (noise(q0 / 37.0) - 0.5) * 0.6 * gui;
     float coastPx = t.coast * ppb + wobble;
-    float rangePx = CoastRange * uBaseInfo.y * ppb;
+    // A survival client's chart holds coast distances out to a shorter reach, the far value past it (0.5.4, WM-D63,
+    // RevealGate.CoastReach): the coastal wash fades out before it, as the waterlines do before the range, so it shows no step.
+    bool reached = uMaskInfo.y > 0.0;
+    float rangePx = (reached ? uMaskInfo.y : CoastRange) * uBaseInfo.y * ppb;
     vec3 c = vec3(1.0);
     float ink = 0.0;
     vec3 inkColor = Ink;
@@ -303,7 +306,8 @@ vec4 chart(Terrain t, vec2 offset, float reveal)
         // Sea: a watercolour wash strongest along the coast, waterlines and soundings.
         float off = -coastPx;
         float depth = max(0.0, -t.height);
-        float wash = 0.22 + 0.42 * exp(-off / (26.0 * gui)) - 0.08 * smoothstep(8.0, 60.0, depth);
+        float wash = 0.22 + 0.42 * exp(-off / (26.0 * gui)) * (reached ? 1.0 - smoothstep(0.5 * rangePx, 0.9 * rangePx, off) : 1.0)
+            - 0.08 * smoothstep(8.0, 60.0, depth);
         c = mix(c, Wash, clamp(wash, 0.0, 0.7));
         float lines = 0.0;
         for (int k = 0; k < 5; k++)

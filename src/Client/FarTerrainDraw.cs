@@ -21,6 +21,9 @@ public sealed class FarFrame
     /// <summary>Blocks the chart's heights span (<see cref="AtlasInfo.ChartHeightRange"/>).</summary>
     public double HeightRange = Semantic.DefaultHeightRange;
     public int ChartTexture;
+    /// <summary>A survival client (0.5.4, WM-D63): far terrain draws only chart texels <see cref="KnownTexture"/> marks (R 255).</summary>
+    public bool Explored;
+    public int KnownTexture;
     public double BlocksPerTexel;
     /// <summary>Far terrain starts Start blocks (horizontal) from the camera, where the game's chunks fade, and ends at Far.</summary>
     public double Start, Far;
@@ -42,6 +45,8 @@ public sealed class FarFrame
     /// fade into this mesh (at least Start).</summary>
     public double CurveFrom;
     /// <summary>Sea colour override (Sea mod), or null for the atlas palette.</summary>
+    /// <summary>A colour far water takes instead of its own (RGB), or null: the smoke checks paint water with it to find it. (World
+    /// Map bound Sea's FarWaterColor to it until 0.5.4, WM-0049; Sea never had one.)</summary>
     public float[] Water;
     public float[] FogColor = { 0.7f, 0.8f, 0.9f, 1 }, SunPosition = { 0, 1, 0 }, SunColor = { 1, 1, 1 };
     public float FogDensity, FogMin, HorizonFog, DayLight = 1;
@@ -106,12 +111,12 @@ public sealed class FarTerrainDraw : IDisposable
     /// to (<see cref="PinGameSamplers"/>). A program with more game samplers has all of these moved up by as many.</summary>
     public const int ChartUnit = 15, BandUnit = 14, BandBiomeUnit = 13, ClimateBiomeUnit = 12, PlantTintUnit = 11, WaterTintUnit = 10,
         RecHeightUnit = 9, RecColorUnit = 8, RecSlotsUnit = 7, CellTopUnit = 6, CellColorUnit = 5, LoadedUnit = 4,
-        ClimateSeasonUnit = 16, GrassSeasonsUnit = 17;
-    public static readonly int[] Units = { ChartUnit, BandUnit, BandBiomeUnit, ClimateBiomeUnit, PlantTintUnit, WaterTintUnit, RecHeightUnit, RecColorUnit, RecSlotsUnit, CellTopUnit, CellColorUnit, LoadedUnit, ClimateSeasonUnit, GrassSeasonsUnit };
+        ClimateSeasonUnit = 16, GrassSeasonsUnit = 17, KnownUnit = 18;
+    public static readonly int[] Units = { ChartUnit, BandUnit, BandBiomeUnit, ClimateBiomeUnit, PlantTintUnit, WaterTintUnit, RecHeightUnit, RecColorUnit, RecSlotsUnit, CellTopUnit, CellColorUnit, LoadedUnit, ClimateSeasonUnit, GrassSeasonsUnit, KnownUnit };
     /// <summary>The highest of <see cref="Units"/>.</summary>
-    public const int TopUnit = GrassSeasonsUnit;
+    public const int TopUnit = KnownUnit;
     /// <summary>Wmap's samplers, in the order of <see cref="Units"/>.</summary>
-    public static readonly string[] SamplerNames = { "wmapChart", "wmapBandTex", "wmapBandBiome", "wmapClimateBiome", "wmapPlantTint", "wmapWaterTint", "wmapRecHeight", "wmapRecColor", "wmapRecSlots", "wmapCellTop", "wmapCellColor", "wmapLoaded", "wmapClimateSeason", "wmapGrassSeasons" };
+    public static readonly string[] SamplerNames = { "wmapChart", "wmapBandTex", "wmapBandBiome", "wmapClimateBiome", "wmapPlantTint", "wmapWaterTint", "wmapRecHeight", "wmapRecColor", "wmapRecSlots", "wmapCellTop", "wmapCellColor", "wmapLoaded", "wmapClimateSeason", "wmapGrassSeasons", "wmapKnown" };
     readonly int[] previousBindings = new int[Units.Length];
     int previousUnit, unitShift;
     // One frame's drawing (0.5.3, WM-0031): the texture units are saved the first time they are bound and given back once,
@@ -306,6 +311,7 @@ public sealed class FarTerrainDraw : IDisposable
         Set("wmapCells", 0, (float)f.CellSize, (float)f.CellMapX, (float)f.CellMapZ);
         for (int i = 0; i < Units.Length; i++) Sampler(SamplerNames[i], Units[i] + unitShift);
         Set("wmapLoadedInfo", (float)f.MaskX, (float)f.MaskZ, FarStart.MaskSide, f.LoadedMask != 0 ? 1 : 0);
+        Set("wmapKnownOn", f.Explored ? 1f : 0f);
         return BindTextures(f, mode);
     }
 
@@ -335,6 +341,7 @@ public sealed class FarTerrainDraw : IDisposable
         Texture(LoadedUnit, f.LoadedMask);
         Texture(ClimateSeasonUnit, tiles?.Climate?.SeasonTexture ?? 0);
         Texture(GrassSeasonsUnit, f.GrassSeasons);
+        Texture(KnownUnit, f.KnownTexture);
         return true;
     }
 

@@ -60,7 +60,8 @@ public sealed class WmapSystem : ModSystem
             // Appended: earlier message types keep their numbers for older peers.
             .RegisterMessageType<TeleportRequest>().RegisterMessageType<AutoMarkRequest>()
             .RegisterMessageType<MapDraw>().RegisterMessageType<MapPiece>().RegisterMessageType<MapRead>()
-            .RegisterMessageType<OreHeatRequest>().RegisterMessageType<OreHeatResponse>();
+            .RegisterMessageType<OreHeatRequest>().RegisterMessageType<OreHeatResponse>()
+            .RegisterMessageType<ExploreUpdate>().RegisterMessageType<ChartPatch>();
         return channel;
     }
     public override void Start(ICoreAPI api) => api.RegisterItemClass(PaperMapItem.ClassName, typeof(PaperMapItem));
@@ -99,7 +100,7 @@ public sealed class WmapSystem : ModSystem
         channel.SetMessageHandler<TeleportRequest>((p, r) => Admit(api, p, () => server.Teleport(p, r), "wmap-teleport"));
         var autoMarks = new AutoMarkServer(api, config);
         channel.SetMessageHandler<AutoMarkRequest>((p, r) => Admit(api, p, () => autoMarks.Request(p, r), "wmap-automark"));
-        var paperMaps = new PaperMapServer(api, channel, config, () => server.Source?.Info.Topology());
+        var paperMaps = new PaperMapServer(api, channel, config, () => server.Source?.Info.Topology(), server.Exploration);
         // A drawing's upload is put together on arrival, without main-thread work (there may be hundreds of pieces).
         channel.SetMessageHandler<MapDraw>((p, d) => { if (!ended) paperMaps.Draw(p, d); });
         channel.SetMessageHandler<MapPiece>((p, m) => { if (!ended) paperMaps.Piece(p, m); });
@@ -116,6 +117,9 @@ public sealed class WmapSystem : ModSystem
             catch (Exception e) { api.Logger.Error("[wmap] Could not initialize atlas: {0}", e); }
         });
         serverTick = api.Event.RegisterGameTickListener(_ => { server.Tick(); paperMaps.Tick(); oreHeat.Tick(); }, 50);
+        // Players' charted areas are kept in the world save (WM-D63). Never unsubscribed in Dispose: the server saves after the
+        // mods are disposed.
+        api.Event.GameWorldSave += () => server.Exploration.Save();
         api.Event.PlayerDisconnect += p => { server.Leave(p.PlayerUID); paperMaps.Leave(p.PlayerUID); oreHeat.Leave(p.PlayerUID); pending.TryRemove(p.PlayerUID, out _); };
         // A grant saved with the player (a crash, a removed ship mod) must not outlive its source.
         api.Event.PlayerNowPlaying += p =>
@@ -143,6 +147,9 @@ public sealed class WmapSystem : ModSystem
                 if (r.Stream == 1) client.Far?.Receive(r); else client.Tiles.Receive(r);
             }, "wmap-response"))
             .SetMessageHandler<BaseChunk>(c => api.Event.EnqueueMainThreadTask(() => { if (!ended) client?.ReceiveChart(c); }, "wmap-chart"))
+            // A survival client's exploration and its blocks of the chart (0.5.4, WM-D63).
+            .SetMessageHandler<ExploreUpdate>(u => api.Event.EnqueueMainThreadTask(() => { if (!ended) client?.ReceiveExplore(u); }, "wmap-explore"))
+            .SetMessageHandler<ChartPatch>(c => api.Event.EnqueueMainThreadTask(() => { if (!ended) client?.ReceivePatch(c); }, "wmap-chart-patch"))
             .SetMessageHandler<MapPiece>(m => api.Event.EnqueueMainThreadTask(() => { if (!ended) client?.PaperMaps.Receive(m); }, "wmap-map-piece"))
             .SetMessageHandler<OreHeatResponse>(r => api.Event.EnqueueMainThreadTask(() => { if (!ended) client?.OreHeat.Receive(r); }, "wmap-ore-heat"));
         api.ChatCommands.Create("wmap").WithDescription("Open the Wmap world atlas (map key, normally M)").HandleWith(_ => { Open(); return TextCommandResult.Success(); })

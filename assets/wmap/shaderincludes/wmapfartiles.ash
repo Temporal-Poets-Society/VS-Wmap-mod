@@ -11,6 +11,10 @@ const float WmapAtlasTexels = 1040.0;
 const float WmapSeamReach = 48.0;
 
 uniform sampler2D wmapChart;
+// A survival client (0.5.4, WM-D63): 1 where the chart holds only land the server has sent, which wmapKnown marks (R 1); the
+// rest of the chart is empty and is not drawn.
+uniform float wmapKnownOn;
+uniform sampler2D wmapKnown;
 uniform vec4 wmapChartInfo;               // blocks per texel, ring 0 radius, ring 0 cell, height range
 uniform vec4 wmapOrigin;                  // snapped origin - camera (x, z), camera y, sea surface y
 uniform vec4 wmapWorld;                   // world width, world height, 1 when it wraps east-west, unused

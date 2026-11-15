@@ -27,6 +27,9 @@ public sealed class TileClient : IDisposable
         public long Used;
         public int Revision, RenderedRevision = -1;
         public bool Busy, Missing, Dirty;
+        /// <summary>A predicted tile forgotten while it was being worked on (<see cref="DropPredicted"/>): its result is not
+        /// taken, and the entry goes when it lands.</summary>
+        public bool Dropped;
         public long RequestAt;     // predicted: next request; recorded: next save retry after a failed write
         public long QueuedAt;      // recorded: when it was last copied for encoding and saving
         public byte[] Prediction;  // recorded: the prediction's texels it was last encoded over
@@ -34,7 +37,9 @@ public sealed class TileClient : IDisposable
     // Texels: a recording is encoded to semantic texels only while a view wants it (0.5.3, WM-0035: every save and load of
     // the recorder's tiles, map closed, encoded two 67 KB arrays nobody drew); Result.Texels false leaves the texels as
     // they were, and the view encodes the tile when it wants it (RenderedRevision stays behind).
-    sealed record Work(TileKey Key, TileData Snapshot, byte[] Network, int Revision, bool Save, byte[] Prediction = null, bool Texels = true);
+    // NoDisk: a survival client's predicted tile (WM-D63) is neither read from the shared disk cache (a creative session may
+    // have left whole tiles there) nor written to it (it comes blanked where the player has not been).
+    sealed record Work(TileKey Key, TileData Snapshot, byte[] Network, int Revision, bool Save, byte[] Prediction = null, bool Texels = true, bool NoDisk = false);
     sealed record Result(TileKey Key, TileData Data, byte[] Rgba, int Revision, bool Missing, string Error, bool SaveFailed = false, bool ReadFailed = false, bool Texels = true);
     readonly BlockingCollection<Work> work = new(64);
     readonly BlockingCollection<Result> results = new(64);
@@ -135,7 +140,7 @@ public sealed class TileClient : IDisposable
     public string RecordingPath(TileKey key) => PathFor(key with { Layer = 1 });
     public void SetView(IEnumerable<TileKey> keys)
     {
-        var next = keys.Where(k => k.Layer == 1 || Info.CanPredict).ToHashSet();
+        var next = keys.Where(k => k.Layer == 1 || Info.CanPredict && (Predictable == null || Predictable(k))).ToHashSet();
         // Panning/zooming must not cancel useful work already in flight. Finished tiles
         // remain reusable in the bounded cache. Only closing/switching mode changes View.
         if (!next.SetEquals(desired)) { desired.Clear(); desired.UnionWith(next); WantedVersion++; ordered = null; }
@@ -143,6 +148,31 @@ public sealed class TileClient : IDisposable
     /// <summary>Changes whenever the wanted tiles change (<see cref="SetView"/>, <see cref="CloseView"/>): a view that set
     /// them sees when another view (or closing) replaced them.</summary>
     public int WantedVersion { get; private set; }
+    /// <summary>Whether a predicted tile may be asked for (a survival client asks only for tiles of land it has charted, WM-D63).</summary>
+    public Func<TileKey, bool> Predictable;
+    /// <summary>The wanted tiles are worked out again at the view's next update (newly charted land).</summary>
+    public void Reconsider() => WantedVersion++;
+    /// <summary>Predicted tiles resident for these keys are asked for again (newly charted land in them).</summary>
+    public void RefreshPredicted(Func<TileKey, bool> affected)
+    {
+        foreach (var (key, e) in entries)
+            if (key.Layer == 0 && affected(key)) { e.Missing = true; e.RequestAt = 0; }
+    }
+    /// <summary>Forgets every predicted tile (the client's mode changed: survival tiles are blanked, the full map's are whole).
+    /// One being worked on shows nothing now and goes when its result lands, which is not taken.</summary>
+    public void DropPredicted()
+    {
+        scratch.Clear();
+        foreach (var (key, e) in entries)
+        {
+            if (key.Layer != 0) continue;
+            if (!e.Busy) { scratch.Add(key); continue; }
+            e.Dropped = true; e.Rgba = null;
+            Invalidated?.Invoke(key);
+        }
+        foreach (var key in scratch) { entries.Remove(key); Invalidated?.Invoke(key); }
+        inFlight.Clear(); ordered = null; WantedVersion++;
+    }
     public Entry Get(TileKey key)
     {
         if (entries.TryGetValue(key, out var e)) { e.Used = ++clock; return e; }
@@ -168,7 +198,7 @@ public sealed class TileClient : IDisposable
             entries.Remove(victim.Value);
         }
         var e = new Entry { Used = ++clock };
-        if (!work.TryAdd(new(key, null, null, 0, false, Texels: desired.Contains(key)))) return null;
+        if (!work.TryAdd(new(key, null, null, 0, false, Texels: desired.Contains(key), NoDisk: key.Layer == 0 && Info.Explored))) return null;
         e.Busy = true; entries[key] = e;
         return e;
     }
@@ -179,6 +209,7 @@ public sealed class TileClient : IDisposable
         {
             if (!entries.TryGetValue(result.Key, out var e)) continue;
             e.Busy = false;
+            if (e.Dropped) { entries.Remove(result.Key); Invalidated?.Invoke(result.Key); continue; }
             if (result.Error != null) LastError = result.Error;
             // Dirty was cleared when the save was queued. A failed write keeps the recording unsaved
             // (never evicted, flushed on exit) and retries later.
@@ -273,9 +304,12 @@ public sealed class TileClient : IDisposable
         if (!inFlight.Remove(key) || !Topology.Valid(key) || !entries.TryGetValue(key, out var e)) return;
         // A busy server asks for patience, not a long back-off: the tile is asked for again after the usual 1.5 s.
         if (r.Error == TileResponse.Busy) { e.RequestAt = Environment.TickCount64; return; }
+        // Land this player has not seen (WM-D63): asked again only once some of it is charted (RefreshPredicted).
+        if (r.Error == TileResponse.Unexplored) { e.RequestAt = Environment.TickCount64 + 10000; return; }
         if (r.Error != null) { LastError = r.Error; e.RequestAt = Environment.TickCount64 + 10000; return; }
         if (r.Data == null || r.Data.Length > SemanticTile.MaxCompressedBytes) { LastError = "Invalid tile response"; return; }
-        if (work.TryAdd(new(key, null, r.Data, e.Revision, true))) { e.Busy = true; ReceivedTiles++; }
+        // A tile cut to the land this player has seen is kept in memory only (WM-D63): never saved, never read from disk.
+        if (work.TryAdd(new(key, null, r.Data, e.Revision, !r.Gated && !Info.Explored, NoDisk: r.Gated || Info.Explored))) { e.Busy = true; ReceivedTiles++; }
     }
     /// <summary>Asks for the recordings a sample at x, z goes into (the levels whose cells keep it); true once all of
     /// them are loaded, so <see cref="Observe"/> keeps it.</summary>
@@ -409,7 +443,7 @@ public sealed class TileClient : IDisposable
                     if (w.Key.Layer == 0)
                     {
                         byte[] packed = w.Network;
-                        if (packed == null && File.Exists(path))
+                        if (packed == null && !w.NoDisk && File.Exists(path))
                         {
                             try
                             {
