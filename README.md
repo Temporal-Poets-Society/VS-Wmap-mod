@@ -1,4 +1,4 @@
-# World Map 0.5.4
+# World Map 0.5.5
 
 > **In development (0.x).** The mid-distance renderer remains experimental; client and multiplayer testing continues. Changes per version: [CHANGELOG](CHANGELOG.md); the first release: [release details and verification](docs/release-0.5.0.md).
 

@@ -36,6 +36,9 @@ beside the prospecting pick's own reading there, for every ore; `/wmapore ORE` f
 
 The numbers come from the world's own ore generators, for the same deposits the prospecting pick asks about. With Earth's
 regional ores they answer anywhere on the planet, as they answer the pick. Where Earth keeps the game's own rock layers
-in a column (under ice sheets, for example), a cell stays unknown until that chunk is loaded. With the game's own
+in a column, a cell stays unknown until that chunk is loaded. From Earth 2.0.1 the game's own rock layers are Earth's
+default (**Terrain · Rocks and ground** on Earth's tab of the world-creation screen: "Vanilla rock layers"), so on such a
+world the map shows ore only around loaded chunks; with "Ground columns" or "Regional rock regions only" it covers the
+whole planet (only under ice sheets do cells wait). With the game's own
 generators (Earth's default ores, or worlds without Earth) the map asks the pick's own question, host rock included, but
 only where the server has that chunk loaded; elsewhere a cell is unknown.

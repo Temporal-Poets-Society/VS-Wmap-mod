@@ -38,6 +38,10 @@ public sealed partial class FarTerrain : IRenderer
     int plantTint, waterTint, grassSeasons;
     bool tintsLoaded;
     IShaderProgram program, cellsProgram, mapProgram, lightsProgram;
+    // The cover pass's programs (0.5.5, WM-0054): farterrain and farcells compiled with WMAP_COVER, the only ones that write
+    // gl_FragDepth, so the other passes keep the GPU's early depth test (wmapfarshade.ash).
+    IShaderProgram coverProgram, coverCellsProgram;
+    const string CoverDefine = "#define WMAP_COVER 1\r\n";
     bool registered, failed, disposed;
     // The mid-distance view: recordings around the camera, its GL resources, the lights' renderer (after the game's chunks).
     RecordedTiles recorded;
@@ -81,12 +85,14 @@ public sealed partial class FarTerrain : IRenderer
 
     bool LoadShader()
     {
-        IShaderProgram Load(ref IShaderProgram slot, string name, out bool ok)
+        IShaderProgram Load(ref IShaderProgram slot, string name, out bool ok, string define = null)
         {
             slot?.Dispose();
             slot = api.Shader.NewShaderProgram();
             slot.AssetDomain = "wmap";
             api.Shader.RegisterFileShaderProgram(name, slot);
+            // A variant of the same files: its define goes after the game's own (ShaderRegistry's prefix code).
+            if (define != null && slot.FragmentShader != null) slot.FragmentShader.PrefixCode += define;
             ok = slot.Compile();
             if (ok && !draw.PlanUnits(slot.ProgramId, PinGameSamplers(slot)))
             {
@@ -98,10 +104,14 @@ public sealed partial class FarTerrain : IRenderer
         draw.ProgramReloaded();
         mid.ProgramReloaded();
         Load(ref program, "farterrain", out bool compiled);
+        Load(ref coverProgram, "farterrain", out bool cover, CoverDefine);
+        compiled &= cover;
         failed = !compiled;
         if (failed) { Status = "off: shader did not compile (see client-main.log)"; api.Logger.Error("[wmap] Far terrain shader did not compile; far terrain is off."); }
         // The mid-distance view's programs: without them far terrain still draws, as before.
         Load(ref cellsProgram, "farcells", out bool cells);
+        Load(ref coverCellsProgram, "farcells", out bool coverCells, CoverDefine);
+        cells &= coverCells;
         Load(ref mapProgram, "farcellmap", out bool map);
         Load(ref lightsProgram, "farlights", out bool glows);
         midFailed = !(cells && map && glows);
@@ -270,19 +280,28 @@ public sealed partial class FarTerrain : IRenderer
                 // blocks from there on (fading into the sky colour) then lie behind it at any distance, and every nearer one in
                 // front. rc.5 forced the depth in one pass out to 0.95 of the view distance only (two far surfaces on a pixel
                 // would have had the same depth); trees in the fading band stayed in front of far land farther away.
+                // The depth pass draws the terraces and recorded structures only, and the colour pass the smooth mesh with its own
+                // depth, then their colour without depth writes; the cover has its own programs (0.5.5, WM-0054). A depth pass
+                // pays where many surfaces cover a pixel, as the terraces' cells and walls do, not under the smooth mesh; with depth
+                // writes the shaders' discard has the GPU shade every fragment before its depth test, and a program that writes
+                // gl_FragDepth (the cover) has that in every pass. The same picture and depth, 1.87 ms down to 1.08 ms in the GPU
+                // bench (tests/FarGpuBench) with the mesh's hidden rows left out (FarMesh.Ranges).
                 GL.GetInteger(GetPName.DepthFunc, out int depthFunc);
                 bool depthMask = GL.GetBoolean(GetPName.DepthWritemask);
                 GL.GetBoolean(GetPName.ColorWritemask, colorMask);
                 try
                 {
                     GL.ColorMask(false, false, false, false); GL.DepthMask(true); GL.DepthFunc(DepthFunction.Lequal);
-                    DrawPass(1, mapHeight);
-                    GL.ColorMask(colorMask[0], colorMask[1], colorMask[2], colorMask[3]); GL.DepthMask(false); GL.DepthFunc(DepthFunction.Lequal);
-                    DrawPass(2, mapHeight);
+                    DrawCells(1, mapHeight, cellsProgram);
+                    GL.ColorMask(colorMask[0], colorMask[1], colorMask[2], colorMask[3]); GL.DepthMask(true); GL.DepthFunc(DepthFunction.Lequal);
+                    DrawMesh(2, program);
+                    GL.DepthMask(false);
+                    DrawCells(2, mapHeight, cellsProgram);
                     GL.DepthFunc((DepthFunction)depthFunc);
                     DrawLights();
                     GL.ColorMask(false, false, false, false); GL.DepthMask(true); GL.DepthFunc(DepthFunction.Less);
-                    DrawPass(3, mapHeight);
+                    DrawMesh(3, coverProgram);
+                    DrawCells(3, mapHeight, coverCellsProgram);
                 }
                 finally
                 {
@@ -300,20 +319,31 @@ public sealed partial class FarTerrain : IRenderer
     /// <summary>The smooth mesh, the terraces and the recorded structures in one pass (<see cref="FarFrame.Pass"/>).</summary>
     void DrawPass(int pass, int mapHeight)
     {
+        DrawMesh(pass, program);
+        DrawCells(pass, mapHeight, cellsProgram);
+    }
+
+    /// <summary>The smooth mesh with <paramref name="with"/> (farterrain or its cover variant).</summary>
+    void DrawMesh(int pass, IShaderProgram with)
+    {
         frame.Pass = pass;
-        program.Use();
-        try { draw.Draw(program.ProgramId, frame); }
-        finally { program.Stop(); }
-        if (frame.TerraceRadius > frame.Start || frame.Recorded != null)
+        with.Use();
+        try { draw.Draw(with.ProgramId, frame); }
+        finally { with.Stop(); }
+    }
+
+    /// <summary>The terraces and the recorded structures with <paramref name="with"/> (farcells or its cover variant).</summary>
+    void DrawCells(int pass, int mapHeight, IShaderProgram with)
+    {
+        frame.Pass = pass;
+        if (frame.TerraceRadius <= frame.Start && frame.Recorded == null) return;
+        with.Use();
+        try
         {
-            cellsProgram.Use();
-            try
-            {
-                mid.DrawTerraces(cellsProgram.ProgramId, draw, frame, mapHeight);
-                if (frame.Recorded != null) mid.DrawStructures(cellsProgram.ProgramId, draw, frame, frame.SmoothStart);
-            }
-            finally { cellsProgram.Stop(); }
+            mid.DrawTerraces(with.ProgramId, draw, frame, mapHeight);
+            if (frame.Recorded != null) mid.DrawStructures(with.ProgramId, draw, frame, frame.SmoothStart);
         }
+        finally { with.Stop(); }
     }
 
     bool lightsDrawn;
@@ -560,6 +590,6 @@ public sealed partial class FarTerrain : IRenderer
         if (plantTint != 0) GL.DeleteTexture(plantTint);
         if (waterTint != 0) GL.DeleteTexture(waterTint);
         if (grassSeasons != 0) GL.DeleteTexture(grassSeasons);
-        program?.Dispose(); cellsProgram?.Dispose(); mapProgram?.Dispose(); lightsProgram?.Dispose();
+        program?.Dispose(); cellsProgram?.Dispose(); mapProgram?.Dispose(); lightsProgram?.Dispose(); coverProgram?.Dispose(); coverCellsProgram?.Dispose();
     }
 }

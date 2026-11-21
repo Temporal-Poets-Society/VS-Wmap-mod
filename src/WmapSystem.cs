@@ -10,6 +10,8 @@ namespace Wmap;
 
 public sealed class WmapSystem : ModSystem
 {
+    /// <summary>The far view's on/off hotkey (WM-0053).</summary>
+    public const string FarViewHotkey = "wmapfarview";
     ICoreClientAPI capi;
     ICoreServerAPI sapi;
     IClientNetworkChannel clientChannel;
@@ -171,6 +173,15 @@ public sealed class WmapSystem : ModSystem
                 return TextCommandResult.Success("Wmap mid-distance view: " + (client?.Far?.MidStatus() ?? "far terrain is not running"));
             })
             .EndSubCommand()
+            // The far view on or off (0.5.5, WM-0053): saved, and freed when off; also Ctrl+Shift+F and the atlas's button.
+            .BeginSubCommand("far").WithDescription("Far view (far terrain past the view distance): on or off; without a word, say what it does now")
+            .WithArgs(api.ChatCommands.Parsers.OptionalBool("on"))
+            .HandleWith(args =>
+            {
+                if (client == null) return TextCommandResult.Error("World Map has not started in this world.");
+                return TextCommandResult.Success(args.Parsers[0].IsMissing ? client.FarViewStatus() : client.SetFarView((bool)args[0]));
+            })
+            .EndSubCommand()
             // Far terrain's colour on its own (0.5.3-rc.4), to compare it on screen with the game's ground: not saved.
             .BeginSubCommand("fardebug").WithDescription("Far terrain debug view: off, albedo (its colour alone) or lit (lit, without haze or fog)")
             .WithArgs(api.ChatCommands.Parsers.OptionalWordRange("view", "off", "albedo", "lit"))
@@ -197,6 +208,14 @@ public sealed class WmapSystem : ModSystem
                 config.CoordinatesHud = !config.CoordinatesHud;
                 api.StoreModConfig(config, "wmap.json");
                 if (config.CoordinatesHud) coordinates?.TryOpen(); else coordinates?.TryClose();
+                return true;
+            });
+            // The far view on or off (0.5.5, WM-0053; Ctrl+Shift+F is free in the game and the suite's mods), rebindable.
+            if (api.Input.GetHotKeyByCode(FarViewHotkey) == null)
+                api.Input.RegisterHotKey(FarViewHotkey, "Wmap: far view on/off", GlKeys.F, HotkeyType.HelpAndOverlays, ctrlPressed: true, shiftPressed: true);
+            api.Input.SetHotKeyHandler(FarViewHotkey, _ =>
+            {
+                if (client != null) api.ShowChatMessage(client.SetFarView(!config.FarTerrain));
                 return true;
             });
             api.Logger.Notification("[wmap] Atlas bound to the world map action; .wmap also opens it.");

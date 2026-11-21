@@ -7,7 +7,9 @@ param([ValidateSet('earth','cylinder','plain')][string]$Profile = 'earth', [stri
     # ([IO.Directory]::Delete on that path, or cmd /c rmdir) before deleting the run folder, or Remove-Item -Recurse may
     # follow it into the player's heights.
     # Earth's ore deposits: maps (Earth's own generator, whose readings the ore heat checks expect) or vanilla (the play style's default)
-    [ValidateSet('maps','vanilla')][string]$EarthOreDeposits = 'maps')
+    [ValidateSet('maps','vanilla')][string]$EarthOreDeposits = 'maps',
+    # Earth's rocks (earthRocks): empty keeps the Earth play style's own (vanilla from Earth 2.0.1, groundcolumns in 2.0.0).
+    [ValidateSet('','vanilla','groundcolumns','regional')][string]$EarthRocks = '')
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot
 # the suite root: the first folder above this checkout with suite.json (a worktree sits deeper than the main checkout)
@@ -91,6 +93,7 @@ if ($Profile -eq 'earth') {
     }
     $settings.WorldConfig.WorldConfiguration | Add-Member -NotePropertyName earthWorldSize -NotePropertyValue 'vanilla' -Force
     $settings.WorldConfig.WorldConfiguration | Add-Member -NotePropertyName earthOreDeposits -NotePropertyValue $EarthOreDeposits -Force
+    if ($EarthRocks) { $settings.WorldConfig.WorldConfiguration | Add-Member -NotePropertyName earthRocks -NotePropertyValue $EarthRocks -Force }
     $settings.WorldConfig.WorldConfiguration | Add-Member -NotePropertyName earthWorldHeight -NotePropertyValue $MapHeight -Force
     # no downloads: Earth's data comes from the player's store (data, ground and cache copied, glo90 linked as a junction)
     $data = Join-Path $env:APPDATA 'VintagestoryData\ModData\earth'

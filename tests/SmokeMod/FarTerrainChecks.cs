@@ -314,7 +314,11 @@ public static class FarTerrainChecks
                         GL.UseProgram(capture);
                         GL.Enable(EnableCap.RasterizerDiscard);
                         GL.BeginTransformFeedback(TransformFeedbackPrimitiveType.Triangles);
-                        d.Draw(capture, frame);
+                        // Every triangle, in index order (the capture maps them back by position): not only those that can show.
+                        bool trim = d.Trim;
+                        d.Trim = false;
+                        try { d.Draw(capture, frame); }
+                        finally { d.Trim = trim; }
                         GL.EndTransformFeedback();
                         GL.Disable(EnableCap.RasterizerDiscard);
                         var flat = new float[indices.Length * 3];

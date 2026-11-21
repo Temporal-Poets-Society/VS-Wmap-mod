@@ -64,6 +64,11 @@ void terrace()
     float cell = wmapCells.y;
     ivec2 size = textureSize(wmapCellTop, 0);
     ivec2 own = ivec2(patchIn.xy + cellIn.xy);
+    // A cell wholly outside the draw range is not drawn (0.5.5, WM-0054): the cell map holds 64 blocks more on either side of
+    // the terraces' ring (farcellmap.fsh), and every fragment of those cells was discarded (wmapfarshade.ash: a fragment's
+    // distance is its corners', interpolated). Corners and walls lie within 0.75 of a cell of its centre.
+    float centre = wmapCameraDistance(wmapCells.zw + (vec2(own) + 0.5) * cell);
+    if (centre + 0.75 * cell < wmapRange.x || centre - 0.75 * cell > wmapRange.y) { gl_Position = Nowhere; return; }
     int side = int(sideIn.x + 0.5);
     ivec2 next = own + (side == 1 ? ivec2(1, 0) : side == 2 ? ivec2(0, 1) : ivec2(0));
     float ownTop = texelFetch(wmapCellTop, own, 0).r;

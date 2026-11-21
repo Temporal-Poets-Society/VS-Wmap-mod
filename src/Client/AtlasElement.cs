@@ -148,6 +148,7 @@ public sealed partial class AtlasElement : GuiElement
                 // only the recorded cells that confirm it (WM-D41).
                 foreach (var tile in view.Display)
                     atlas.Draw(tile, client.Renderer, ViewTiles.Opacity(tile.Key, fade), 51.05f + 0.005f * n++, view.Reference(tile));
+                terrainTop = 51.05f + 0.005f * n;
                 if (surface && winds) client.Renderer.DrawWinds(57, !WindGrid.IsWeather(config.WindLayer));
                 if (surface) DrawPlayer(player);
                 double rose = Math.Min(64 * frame.Gui, Math.Min(frame.Width, frame.Height) / 7);

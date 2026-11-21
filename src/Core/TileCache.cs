@@ -60,4 +60,33 @@ public static class TileCache
         }
         return total;
     }
+
+    /// <summary>Cache folders unused this long are removed (<see cref="Prune"/>).</summary>
+    public static readonly TimeSpan Unused = TimeSpan.FromDays(14);
+
+    /// <summary>
+    /// Marks <paramref name="folder"/> (a world's cache folder, created if missing) as used now, then removes its siblings
+    /// unused for <paramref name="unused"/>: cache folders of other worlds, World Map builds and terrain mods (0.5.5, WM-0057:
+    /// none was ever removed; the author's data folder held 193 server and 192 client folders, 8 GB, since September). Only
+    /// folders named as a cache id (64 hex characters) and no links; a folder that cannot be removed now is left. A world
+    /// played again after that charts again. Returns how many were removed.
+    /// </summary>
+    public static int Prune(string folder, TimeSpan unused, DateTime? now = null)
+    {
+        var at = now ?? DateTime.UtcNow;
+        Directory.CreateDirectory(folder);
+        try { Directory.SetLastWriteTimeUtc(folder, at); } catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { }
+        var parent = Directory.GetParent(Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        if (parent == null) return 0;
+        string own = Path.GetFileName(Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        int removed = 0;
+        foreach (var dir in parent.EnumerateDirectories())
+        {
+            if (dir.Name == own || dir.Name.Length != 64 || !dir.Name.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f')) continue;
+            if (dir.Attributes.HasFlag(FileAttributes.ReparsePoint) || at - dir.LastWriteTimeUtc < unused) continue;
+            try { dir.Delete(true); removed++; }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { /* in use or read-only: next time */ }
+        }
+        return removed;
+    }
 }

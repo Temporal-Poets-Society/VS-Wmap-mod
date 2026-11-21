@@ -1,3 +1,39 @@
+# 0.5.5 (21 November 2026)
+
+Lighter on memory and on the GPU: the world is charted again only when what shapes it changes, a session that charts it no
+longer keeps gigabytes afterwards, and far terrain takes about 40 % less GPU time over land for the same picture.
+
+### Memory
+
+- **Adding, removing or updating a mod no longer charts the whole world again** (WM-0055, WM-D65). The chart's cache
+  follows the world, World Map itself and the mods that shape its terrain (Earth, Cylinder World, Terra Prety, and
+  vanilla's ocean map where the chart comes from it), not every installed mod. Ore heat maps, which other mods' ores do
+  change, are made again after any change of the mod list, as before.
+- **A session that charts the world gives the memory back** (WM-0055). Charting a 1:10 Earth world left gigabytes behind
+  until the game closed (13-18 GB more in a single-player session on the bench); now one collection right after the
+  chart returns them. On a dedicated 1:10 server: 10.6 GB down to 4.0 GB, a pause of 1.7 s once. The log says how long
+  it took.
+- **Charting reads the world in small blocks** (EA-0194): the chart and the climate raster are sampled 16 x 16 texels at a
+  time instead of row by row, so Earth decodes each of its data tiles once instead of again for every row. The same chart;
+  on a dedicated 1:10 server the climate raster took 3.3 s instead of 13.7, the chart 64.6 s instead of 68.8, half as
+  much memory was allocated, and the peak fell from 13.3 to 8.9 GB.
+- **Earth's river courses are read only to chart the world** and let go after it (349 MB at 1:10 for the whole session
+  before, also when the chart came from the cache).
+- **Old caches are cleaned up** (WM-0057): chart and tile caches unused for two weeks are removed at start; none ever was,
+  and a data folder that had seen many test worlds held 8 GB of them. A world played again after that is charted again.
+  Recorded terrain is never removed. (Each new world is still charted once: its seed shapes its terrain.)
+
+### Far terrain
+
+- **The far view can be switched off and on in game** (WM-0053): Ctrl+Shift+F (Controls: "Wmap: far view on/off"), the
+  atlas's Far view button or `.wmap far on|off`; a chat line says which, and while it waits for the world chart, how far
+  charting has come. Off frees its GPU memory. The choice is kept in `wmap.json` (`FarTerrain`).
+- **About 40 % less GPU time over land, a third less toward a coast, for the same picture** (WM-0054, WM-D66): the cover pass has its own shaders, so the other
+  passes skip far ground hidden behind nearer far ground before shading it; the terraces' depth goes first; and only the
+  part of the far mesh that can show is drawn. Measured offscreen at 1920 x 1080, view distance 384, in four views: 1.50-1.94 ms
+  down to 1.02-1.11 ms, with the same colour and depth at every pixel; in game on a 1:10 world over Riga, 2.18 ms down to
+  1.29 ms, and the night frame 0.9 ms shorter.
+
 # 0.5.4 (15 November 2026)
 
 The unexplored map is for creative only: a survival player's client receives nothing of the predicted world they have not seen. Client and server must both run 0.5.4. **Start a new world:** worlds made with earlier World Map versions are not supported by 0.5.4.
@@ -10,6 +46,14 @@ The unexplored map is for creative only: a survival player's client receives not
 - **The world option "shared world chart" is gone** from the world-creation screen, and `ShareWorldChart` in `wmap.json` is no longer used. A server that wants everyone to see the whole map sets `AllowAllPlayers`.
 - **Paper maps** draw the charted area from the server's record of what the drawer has charted, so a map cannot chart land its drawer has not seen; reading one charts the reader's area on the server.
 - **Worlds from earlier World Map versions are not supported.** Start a new world for 0.5.4. (Earlier versions kept each player's charted area on their own client, where it cannot be trusted; nothing is taken over from there.)
+
+### Prospecting on the map
+
+- **A reading's text shows whole, in a hover box by the cursor** (WM-0059): the ore list with its handbook links and
+  colours, as on the game's map. Before, the atlas printed it as raw markup in the one-line status text, cut off after the
+  first ores.
+- **Prospect Together's chunks show on the atlas and the minimap** (WM-0060): other mods' layers drawn at the game map's
+  depth were hidden under World Map's terrain. Their hover text now reaches the hover box too.
 
 ### Sturdier with other mods
 

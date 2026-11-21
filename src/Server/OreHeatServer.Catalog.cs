@@ -112,8 +112,9 @@ public sealed partial class OreHeatServer
         var built = list.ToArray();
         var index = new Dictionary<string, int>();
         for (int i = 0; i < built.Length; i++) index[built[i].Code] = i;
-        // What a stored tile depends on beyond the cache folder (seed, mods and terrain): the ores, their generators and
-        // amounts, the world's height and the tiles' layout.
+        // What a stored tile depends on beyond the cache folder (seed and terrain): the ores, their generators and amounts, the
+        // world's height, the tiles' layout, and every mod (0.5.5, WM-0055: the folder no longer changes with the mod list, and
+        // any mod may add or patch deposits and their host rocks).
         string catalogue = string.Join(";", built.Select(o => o.Code + "=" + (o.Reading ? "reading" : o.BlocksAtFull.ToString("R", System.Globalization.CultureInfo.InvariantCulture))
             + ":" + o.Variant.GeneratorInst?.GetType().FullName + "@" + o.Variant.GeneratorInst?.GetType().Module.ModuleVersionId));
         EarthStrata(built);
@@ -122,7 +123,7 @@ public sealed partial class OreHeatServer
         method = built.Length == 0 ? null : reading == built.Length ? OreHeatRequest.Reading : reading == 0 ? OreHeatRequest.OreMap : "mixed";
         codes = built.Select(o => o.Code).ToArray();
         byCode = index;
-        fingerprint = TileCodec.Hash($"wmap-oreheat-v3|{catalogue}|{api.WorldManager.MapSizeY}|{api.World.Seed}|{OreHeat.TileCells}|{typeof(OreHeatServer).Module.ModuleVersionId}")[..16];
+        fingerprint = TileCodec.Hash($"wmap-oreheat-v4|{catalogue}|{api.WorldManager.MapSizeY}|{api.World.Seed}|{OreHeat.TileCells}|{typeof(OreHeatServer).Module.ModuleVersionId}|{Wmap.Integrations.WorldSource.ModList(api)}")[..16];
         Volatile.Write(ref ores, built);
         if (built.Length > 0) api.Logger.Notification("[wmap] Ore heat maps: {0} ores ({1})", built.Length, method);
     }

@@ -9,8 +9,10 @@ WM-Pnn); test results: `docs\testing.md`.
 ## Repository
 - Trunk `main`, tracking the private `origin` (`andrisberzins-1/VS-Wmap-mod`). The public
   `Temporal-Poets-Society/VS-Wmap-mod` (remote `tps`) holds clean release snapshots only. Published versions are tags
-  (`v0.5.0`, `v0.5.1`, `v0.5.3`); old lines are `archive/*` tags.
-- `main` carries 0.5.4 (built 15 November 2026, `release/wmap_0.5.4.zip`; publishing, the tag and the push are the author's).
+  (`v0.5.0`, `v0.5.1`, `v0.5.3`, `v0.5.4`, `v0.5.5`); old lines are `archive/*` tags.
+- 0.5.5 is released (tag `v0.5.5`, 21 November 2026: GitHub release on `tps`, installed in the author's game).
+  Publishing, tags and pushes are the author's, through the release coordination.
+- The GitHub wiki's source is `docs/wiki/` (one file per page, `_Sidebar.md`): edit it there; the coordination publishes it.
 
 ## Build
 - First `.\tools\Prepare-References.ps1 -GamePath "$env:APPDATA\Vintagestory"`: it copies the game DLLs into
@@ -29,6 +31,10 @@ WM-Pnn); test results: `docs\testing.md`.
   `astraearth-*` zips from the mods' `release\` folders (AstraTerra's from `forks\AstraTerra\dist`) or the player's Mods
   folder (WM-0008, WM-0013); `-EarthZip`, `-HydrologyZip`, `-AstraZip` and the like pick others. Never install the
   smoke mod in a normal world.
+- Far terrain's GPU time, offscreen (no game, no screen): build the mod, then `dotnet run --project tests\FarGpuBench -c
+  Release -- --baseline <an assets\wmap folder of another version>` (`git archive <tag> assets/wmap` gives one): every
+  pass timed at 1920 x 1080, view distance 384, and each way of drawing compared with the baseline's picture and depth
+  pixel by pixel (WM-0054). Run it with no game running.
 - In game: the AgentBridge bench; for Earth load the Earth, Cylinder World and Hydrology zips and an Earth play
   style. Seen on the bench with Earth 2.0 worlds (0.5.3 looks, WM-0020 to WM-0026); not verified yet: multiplayer, NVIDIA
   or Intel GPUs.

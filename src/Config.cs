@@ -81,7 +81,8 @@ public sealed class WmapConfig
     /// <summary>Winds: 0 off, 1 weather now, 2 prevailing now, 3–14 prevailing in January–December.
     /// Gameplay requires a Jonas barometer; every active choice covers the whole world.</summary>
     public int WindLayer = 1;
-    /// <summary>Draw the world chart as 3D terrain past the view distance (needs Earth Map: a chart with relief).</summary>
+    /// <summary>Draw the world chart as 3D terrain past the view distance (needs Earth Map: a chart with relief). Switched in
+    /// game without a restart from 0.5.5 (WM-0053): Ctrl+Shift+F, the atlas's Far view button or <c>.wmap far on|off</c>.</summary>
     public bool FarTerrain = true;
     /// <summary>Blocks from the player to the far terrain's horizon (2048..16384).</summary>
     public int FarTerrainDistance = 8192;

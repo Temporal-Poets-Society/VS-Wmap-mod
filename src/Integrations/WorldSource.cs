@@ -31,8 +31,27 @@ public sealed class WorldSource
     /// <summary>How the game colours grass through the year at a place (0.5.3-rc.5), from Earth Map's <c>GrassSeasonAt</c>;
     /// null without it (biome tiles then carry <see cref="SeasonSample.None"/>). Thread-safe.</summary>
     public System.Func<double, double, SeasonSample> Season;
-    /// <summary>River centrelines from Earth Map, or null.</summary>
-    public IReadOnlyList<RiverSegment> Rivers;
+    /// <summary>River centrelines from Earth Map, or null: read when first asked (the chart's bake) and let go after it with
+    /// <see cref="ReleaseRivers"/> (0.5.5, WM-0055: 8.7 million segments at 1:10, 349 MB, were read at every start and kept all
+    /// session, also when the chart came from the cache). Earth's members are checked at world start (<see cref="RiverReader"/>).</summary>
+    public IReadOnlyList<RiverSegment> Rivers
+    {
+        get
+        {
+            lock (riverGate)
+            {
+                if (rivers == null && readRivers != null) { rivers = readRivers(); if (rivers == null) readRivers = null; }
+                return rivers;
+            }
+        }
+    }
+    /// <summary>Segments in Earth's river network (before non-finite ones are left out), for the log; 0 without.</summary>
+    public int RiverCount;
+    System.Func<List<RiverSegment>> readRivers;
+    List<RiverSegment> rivers;
+    readonly object riverGate = new();
+    /// <summary>Lets the river centrelines go once the chart is made; <see cref="Rivers"/> reads them again if asked.</summary>
+    public void ReleaseRivers() { lock (riverGate) rivers = null; }
     public static object Member(object o, string name) => o == null ? null : o.GetType().GetField(name)?.GetValue(o) ?? o.GetType().GetProperty(name)?.GetValue(o);
     static object Private(object o, string name) => o?.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)?.GetValue(o);
     /// <summary>A number another mod's object must have (WM-D04): its field or property, or an exception naming it, the
@@ -67,12 +86,18 @@ public sealed class WorldSource
         object terraPrety = FindSystem(api, "TerraPrety.TerraPretyModSystem");
         // Topology and geography stay with PredictTerrain off: exploration and recordings are keyed by them.
         if (!config.PredictTerrain) info.Source = "Observed terrain only (PredictTerrain off)";
+        // What the vanilla ocean map below reads, for the cache id: empty unless the prediction comes from it.
+        string ocean = "";
         if (model != null && Bool(p, "Enabled"))
         {
             string em = EarthGeometry(api, model, cylinder != null, info);
             if (config.PredictTerrain) EarthPrediction(api, model, em, source);
         }
-        else if (config.PredictTerrain && cylinder != null && CylinderSampler(api, cylinder) != null) CylinderPrediction(api, cylinder, terraPrety, source);
+        else if (config.PredictTerrain && cylinder != null && CylinderSampler(api, cylinder) != null)
+        {
+            CylinderPrediction(api, cylinder, terraPrety, source);
+            ocean = OceanInputs(api);
+        }
         if (cylinder != null && source.Samplers != null)
         {
             var surface = new CylinderSurface(cylinder, wm.MapSizeY, info.SeaLevel, flattenSeam);
@@ -86,7 +111,7 @@ public sealed class WorldSource
         info.Biome = source.Biome != null && info.BiomeId != null;
         if (info.Width <= 0 || info.Height <= 0) throw new InvalidOperationException("Invalid saved world geometry");
         info.ObservationId = TileCodec.Hash(FormattableString.Invariant($"wmap-observed-v1|{wm.SaveGame.SavegameIdentifier}|surface|{info.StartX}|{info.Width}|{info.Height}"));
-        info.CacheId = CacheId(api, config, info, p, model, cylinder, flattenSeam, terraPrety);
+        info.CacheId = CacheId(api, config, info, p, earth, model, cylinderCore, cylinder, flattenSeam, terraPrety, ocean);
         return source;
     }
 
@@ -143,7 +168,15 @@ public sealed class WorldSource
             }
             catch (Exception e) { api.Logger.Warning("[wmap] Earth forest and climate unavailable; far terrain keeps the atlas colours: {0}", e.Message); }
             source.WorldBiome = EarthHeights.OnBuiltInHeights(model.GetType().Assembly, source.Biome);
-            try { source.Rivers = EarthRivers(Member(model, "Rivers")); }
+            try
+            {
+                var read = RiverReader(Member(model, "Rivers"), out source.RiverCount);
+                source.readRivers = read == null ? null : () =>
+                {
+                    try { return read(); }
+                    catch (Exception e) { api.Logger.Warning("[wmap] Earth river courses unavailable; rivers are drawn from sampled water only: {0}", e.Message); return null; }
+                };
+            }
             catch (Exception e) { api.Logger.Warning("[wmap] Earth river courses unavailable; rivers are drawn from sampled water only: {0}", e.Message); }
         }
         catch (Exception e) when (e is MissingMemberException or MissingMethodException or ArgumentException or InvalidCastException or AmbiguousMatchException)
@@ -151,7 +184,7 @@ public sealed class WorldSource
             // Earth's terrain could not be read (0.5.3, WM-0033): the atlas charts recorded terrain only, rather than not
             // starting at all; the geometry above stands.
             api.Logger.Error("[wmap] {0}'s terrain could not be read ({1}); the atlas charts recorded terrain only. A World Map made for this Earth fixes it.", em, e.Message);
-            source.Samplers = null; source.Biome = null; source.Season = null; source.WorldBiome = null; source.Rivers = null;
+            source.Samplers = null; source.Biome = null; source.Season = null; source.WorldBiome = null; source.readRivers = null; source.RiverCount = 0;
             info.Source = "Observed terrain only (Earth's terrain unreadable)";
         }
     }
@@ -168,20 +201,45 @@ public sealed class WorldSource
             api.Logger.Warning("[wmap] Terra Prety shapes this world's terrain. Wmap predicts only its land/sea mask, without heights, and its coasts are approximate; recorded terrain draws over the prediction. Set PredictTerrain to false to chart recorded terrain only.");
     }
 
-    /// <summary>What the atlas's stored tiles depend on: the save, the seed, the mods and their builds, and what shapes the
-    /// terrain.</summary>
-    static string CacheId(ICoreServerAPI api, WmapConfig config, AtlasInfo info, object p, object model, object cylinder, bool flattenSeam, object terraPrety)
+    /// <summary>What the atlas's stored chart and tiles depend on: the save, the seed and the world's size; World Map's own
+    /// build; the terrain providers (Earth, Cylinder World, Terra Prety): their builds, versions and settings; and, where the
+    /// prediction comes from vanilla's ocean map, the game's version and what that map reads (<see cref="OceanInputs"/>).
+    /// <para>Not the rest of the mod list (0.5.5, WM-0055): it was all of it, so adding, removing or updating any mod (an
+    /// animal pack, a tool) charted the whole world again. Ore heat maps, which other mods' deposits do shape, keep the whole
+    /// list in their own fingerprint (<see cref="ModList"/>). A mod that changes vanilla's ocean map by patching its code is
+    /// not seen; the server's <c>CacheRevision</c> setting charts the world again by hand.</para></summary>
+    static string CacheId(ICoreServerAPI api, WmapConfig config, AtlasInfo info, object p, object earth, object model, object cylinderCore,
+        object cylinder, bool flattenSeam, object terraPrety, string ocean)
     {
         var wm = api.WorldManager;
-        string mods = string.Join(";", api.ModLoader.Mods.Select(m => m.Info.ModID + "@" + m.Info.Version).OrderBy(s => s));
         // Development builds can change terrain functions without changing modinfo's
         // version. Assembly revisions must invalidate derived predictions as well.
-        string providers = typeof(WorldSource).Module.ModuleVersionId + "|" + model?.GetType().Module.ModuleVersionId + "|" + cylinder?.GetType().Module.ModuleVersionId;
+        string builds = typeof(WorldSource).Module.ModuleVersionId + "|" + model?.GetType().Module.ModuleVersionId + "|" + cylinder?.GetType().Module.ModuleVersionId
+            + "|" + terraPrety?.GetType().Module.ModuleVersionId;
+        // Their versions too: a release can change a provider's data without its code.
+        string versions = ProviderVersion(earth) + "|" + ProviderVersion(cylinderCore) + "|" + ProviderVersion(terraPrety);
         // Only what shapes terrain: runtime state such as Cylinder's sea-ice date must not move the cache on restart.
-        string terrain = JsonConvert.SerializeObject(p) + "|" + SavedLayout(cylinder) + "|flatten=" + flattenSeam + "|" + ForeignConfig(api, terraPrety);
-        return TileCodec.Hash("wmap-tiles-v4|" + config.CacheRevision + "|" + wm.SaveGame.SavegameIdentifier + "|" + wm.Seed + "|" + mods + "|" + providers + "|" + terrain + "|" + info.Width + "|" + info.Height
+        string terrain = JsonConvert.SerializeObject(p) + "|" + SavedLayout(cylinder) + "|flatten=" + flattenSeam + "|" + ForeignConfig(api, terraPrety) + "|" + ocean;
+        return TileCodec.Hash("wmap-tiles-v5|" + config.CacheRevision + "|" + wm.SaveGame.SavegameIdentifier + "|" + wm.Seed + "|" + builds + "|" + versions + "|" + terrain + "|" + info.Width + "|" + info.Height
             // 0.5.0-pre.11: a taller world's heights span more than 256 blocks; its tiles before that were cut at 256.
             + (info.HeightRange != Semantic.DefaultHeightRange ? "|heights=" + info.HeightRange.ToString(CultureInfo.InvariantCulture) : ""));
+    }
+
+    /// <summary>A provider's mod and version ("earth@2.2.0"), or "" without it.</summary>
+    static string ProviderVersion(object system) => system is ModSystem s && s.Mod?.Info is { } m ? m.ModID + "@" + m.Version : "";
+
+    /// <summary>Every loaded mod and its version, sorted: what stored tiles depend on when any mod may shape them (ore heat
+    /// maps: deposits, their amounts and host rocks come from whichever mods add or patch them).</summary>
+    public static string ModList(ICoreAPI api) => string.Join(";", api.ModLoader.Mods.Select(m => m.Info.ModID + "@" + m.Info.Version).OrderBy(s => s, StringComparer.Ordinal));
+
+    /// <summary>What vanilla's ocean map (<see cref="CylinderSampler"/>) reads beyond the seed: the game's version, the world's
+    /// land cover and ocean scale, the map's scale and the story locations it keeps land at (other mods add those).</summary>
+    static string OceanInputs(ICoreServerAPI api)
+    {
+        var gen = api.ModLoader.GetModSystem<GenMaps>();
+        var config = api.WorldManager.SaveGame.WorldConfiguration;
+        string land = gen?.requireLandAt == null ? "" : string.Join(";", gen.requireLandAt.Select(l => l.X + "," + l.Z).OrderBy(s => s, StringComparer.Ordinal));
+        return FormattableString.Invariant($"ocean|{GameVersion.OverallVersion}|{config?.GetString("landcover", "1")}|{config?.GetString("oceanscale", "1")}|{TerraGenConfig.oceanMapScale}|{gen?.noiseSizeOcean}|{api.WorldManager.RegionSize}|{land}");
     }
 
     /// <summary>Cylinder World's saved layout: its protobuf fields, without runtime state (the sea-ice date,
@@ -354,30 +412,47 @@ public sealed class WorldSource
             water != 0 ? (river ? TileData.River : TileData.Water) : iceBottom <= top ? TileData.Ice : TileData.Land);
 
     /// <summary>Earth's laid-out river courses: each segment with its carved half width.</summary>
-    public static List<RiverSegment> EarthRivers(object network)
+    public static List<RiverSegment> EarthRivers(object network) => RiverReader(network, out _)?.Invoke();
+
+    /// <summary>Checks Earth's river network now (its members, WM-D04: a renamed one is named in the log at world start) and
+    /// returns a reader of its courses for later (<see cref="Rivers"/>); null without a network. The reader takes the network's
+    /// segments as they are when it runs, by index through one compiled reader: before 0.5.5 each segment was boxed (WM-0055:
+    /// 8.7 million at 1:10).</summary>
+    public static System.Func<List<RiverSegment>> RiverReader(object network, out int count)
     {
+        count = 0;
         if (network == null) return null;
-        var segments = Private(network, "segs") as Array ?? throw new MissingFieldException("RiverNetwork.segs");
+        Array Segments() => Private(network, "segs") as Array ?? throw new MissingFieldException("RiverNetwork.segs");
+        var segments = Segments();
         var halfWidth = network.GetType().GetMethod("HalfWidth", new[] { typeof(double) }) ?? throw new MissingMethodException("RiverNetwork.HalfWidth");
-        var type = segments.GetType().GetElementType();
+        var arrayType = segments.GetType();
+        var type = arrayType.GetElementType();
         FieldInfo F(string n) => type.GetField(n, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic) ?? throw new MissingFieldException("RiverNetwork.Seg." + n);
-        // Compile one reader instead of boxing every field of every segment through reflection.
-        var item = Expression.Parameter(typeof(object));
-        var typed = Expression.Unbox(item, type);
-        Expression Read(string n) => Expression.Convert(Expression.Field(typed, F(n)), typeof(double));
+        var array = Expression.Parameter(typeof(Array));
+        var index = Expression.Parameter(typeof(int));
+        var segment = Expression.Variable(type);
+        Expression Read(string n) => Expression.Convert(Expression.Field(segment, F(n)), typeof(double));
         var tuple = typeof(ValueTuple<double, double, double, double, double>);
-        var read = Expression.Lambda<System.Func<object, (double, double, double, double, double)>>(
+        var body = Expression.Block(new[] { segment },
+            Expression.Assign(segment, Expression.ArrayIndex(Expression.Convert(array, arrayType), index)),
             Expression.New(tuple.GetConstructor(new[] { typeof(double), typeof(double), typeof(double), typeof(double), typeof(double) }),
-                Read("X1"), Read("Z1"), Read("X2"), Read("Z2"), Read("Q")), item).Compile();
-        var widths = new Dictionary<double, double>();
-        var result = new List<RiverSegment>(segments.Length);
-        foreach (object segment in segments)
+                Read("X1"), Read("Z1"), Read("X2"), Read("Z2"), Read("Q")));
+        var read = Expression.Lambda<System.Func<Array, int, (double, double, double, double, double)>>(body, array, index).Compile();
+        count = segments.Length;
+        return () =>
         {
-            var (x1, z1, x2, z2, q) = read(segment);
-            if (!widths.TryGetValue(q, out double hw)) widths[q] = hw = Convert.ToDouble(halfWidth.Invoke(network, new object[] { q }), CultureInfo.InvariantCulture);
-            if (double.IsFinite(x1 + z1 + x2 + z2 + hw)) result.Add(new(x1, z1, x2, z2, hw));
-        }
-        return result;
+            var now = Segments();
+            if (now.GetType() != arrayType) throw new MissingFieldException("RiverNetwork.segs changed type to " + now.GetType().FullName);
+            var widths = new Dictionary<double, double>();
+            var result = new List<RiverSegment>(now.Length);
+            for (int i = 0; i < now.Length; i++)
+            {
+                var (x1, z1, x2, z2, q) = read(now, i);
+                if (!widths.TryGetValue(q, out double hw)) widths[q] = hw = Convert.ToDouble(halfWidth.Invoke(network, new object[] { q }), CultureInfo.InvariantCulture);
+                if (double.IsFinite(x1 + z1 + x2 + z2 + hw)) result.Add(new(x1, z1, x2, z2, hw));
+            }
+            return result;
+        };
     }
 
     static bool oceanForceMissing;

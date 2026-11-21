@@ -80,14 +80,17 @@ static class OreHeatChecks
             Check(t, one, reading, "chunk cells " + code, Waits);
             if (!reading && api.WorldManager.AllLoadedMapchunks.Count > 0 && one.Blocks.All(float.IsNaN)) throw new Exception("no answer around a loaded chunk");
             int files = Directory.GetFiles(folder, "o-*.wmt").Length;
-            if (reading && (one.Partial || files != 1 || one.Millis <= 0)) throw new Exception($"complete tile not stored ({files} files, partial {one.Partial}, {one.Millis} ms)");
+            // Where Earth keeps vanilla strata (Earth 2.0.1's default rocks; under ice sheets with its own), cells wait for their
+            // chunks (Check above has matched them to the server's own Column): such a tile is partial and is not stored.
+            bool strata = reading && one.Partial;
+            if (reading && !strata && (files != 1 || one.Millis <= 0)) throw new Exception($"complete tile not stored ({files} files, partial {one.Partial}, {one.Millis} ms)");
             if (one.Partial && files != 0) throw new Exception("a partial tile was stored");
             var memory = heat.Serve(code, fine, fx, fz);
             again = Make();
             watch.Restart();
             var disk = again.Serve(code, fine, fx, fz);
             long diskMs = watch.ElapsedMilliseconds;
-            if (reading && (memory.Millis != 0 || disk.Millis != 0 || !Same(one, memory) || !Same(one, disk))) throw new Exception("stored tile answered differently or worked out again");
+            if (reading && !strata && (memory.Millis != 0 || disk.Millis != 0 || !Same(one, memory) || !Same(one, disk))) throw new Exception("stored tile answered differently or worked out again");
             // The listed count is the number of ores above the pick's threshold, cell by cell.
             var listed = heat.Serve(OreHeat.Listed, fine, fx, fz);
             var sum = new float[OreHeat.TileCount];
@@ -147,8 +150,8 @@ static class OreHeatChecks
             while (queue.TryDequeue(out var late)) answers.Add(late.Item2);
             if (!second.All(Answered) || Answered(first[2]) || answers.Any(a => a.Code != code || a.Error != null))
                 throw new Exception("request path: answered " + string.Join(" ", answers.Select(a => $"{a.Code}/{a.Level}/{a.X}/{a.Z}")) + $" (want {string.Join(" ", second)}, not {first[2]})");
-            string ahead = "";
-            if (reading)
+            string ahead = strata ? "; Earth keeps vanilla strata at the spot: cells wait for their chunks, tiles are not stored, no store-ahead" : "";
+            if (reading && !strata)
             {
                 // The first request started storing the coarse levels.
                 wait.Restart();
@@ -160,7 +163,8 @@ static class OreHeatChecks
                     throw new Exception($"store-ahead not running ({doneAhead} of {of} after {wait.ElapsedMilliseconds / 1000.0:0} s; a tile of chunk cells took {fineMs} ms, the whole world {worldMs} ms)");
                 ahead = $"; store-ahead {doneAhead} of {of} coarse tiles after {wait.ElapsedMilliseconds / 1000.0:0.0} s";
             }
-            return $"Ore heat maps: PASS ({codes.Length} ores by {method}; {code} over a tile of chunk cells in {fineMs} ms, stored and read back in {diskMs} ms; " +
+            return $"Ore heat maps: PASS ({codes.Length} ores by {method}; {code} over a tile of chunk cells in {fineMs} ms" +
+                (strata ? $", {one.Blocks.Count(float.IsNaN)} of {one.Blocks.Length} cells waiting for their chunks; " : $", stored and read back in {diskMs} ms; ") +
                 $"listed ores over the whole world (level {top}) in {worldMs} ms, " +
                 $"{world.Blocks.Count(b => b == 0) * 100 / Math.Max(1, world.Blocks.Count(b => !float.IsNaN(b)))}% of cells list nothing; listed = one by one; " +
                 $"refusal and replacement{ahead}; mean blocks/chunk near the spot: {string.Join(", ", tops.Take(12))})";

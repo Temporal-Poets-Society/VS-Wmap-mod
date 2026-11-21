@@ -25,6 +25,8 @@ public sealed partial class AtlasElement
     readonly AtlasMarkers markers;
     string hover = "";
     bool markersFailed;
+    /// <summary>The depth just over the last terrain tile drawn this frame (tiles from 51.05, a little nearer each).</summary>
+    float terrainTop = 52;
 
     static bool IsOverlay(MapLayer layer) => layer is not ChunkMapLayer && layer is not PlayerMapLayer && layer is not WmapMinimapLayer
         && layer is not WaypointMapLayer && layer is not OreMapLayer;
@@ -69,17 +71,26 @@ public sealed partial class AtlasElement
             for (int lap = first; lap <= last; lap++)
             {
                 var map = Overlay(lap);
-                foreach (var layer in overlayLayers)
+                // Layers draw at the game map's depths, 2D textures mostly at 50 (Prospect Together's chunk overlays),
+                // where the game's own map tiles lie beneath them. The atlas's terrain lies at 51 and above, so it hid
+                // them: lift the layers just over it, through the matrix stack Render2DTexture and meshes use (WM-0060).
+                api.Render.GlPushMatrix();
+                api.Render.GlTranslate(0f, 0f, Math.Max(0f, terrainTop + 0.5f - 50f));
+                try
                 {
-                    if (!layer.Active) continue;
-                    try { layer.Render(map, lap == first ? dt : 0); }
-                    catch (Exception e)
+                    foreach (var layer in overlayLayers)
                     {
-                        // one bad layer doesn't take the atlas down
-                        failedLayers.Add(layer);
-                        api.Logger.Warning("[wmap] Map layer {0} failed to draw on the atlas and is left out: {1}", layer.GetType().Name, e.Message);
+                        if (!layer.Active) continue;
+                        try { layer.Render(map, lap == first ? dt : 0); }
+                        catch (Exception e)
+                        {
+                            // one bad layer doesn't take the atlas down
+                            failedLayers.Add(layer);
+                            api.Logger.Warning("[wmap] Map layer {0} failed to draw on the atlas and is left out: {1}", layer.GetType().Name, e.Message);
+                        }
                     }
                 }
+                finally { api.Render.GlPopMatrix(); }
                 int here = lap;
                 try { markers.Draw(map, camera.Scale, api.Input.MouseX, api.Input.MouseY, x => PinnedHere(x, here)); }
                 catch (Exception e)
@@ -105,8 +116,13 @@ public sealed partial class AtlasElement
             if (!layer.Active) continue;
             try { layer.OnMouseMoveClient(args, map, text); } catch (Exception) { }
         }
-        hover = text.ToString().Trim().Replace("\r", "").Replace("\n", " · ");
+        // Several lines of VTML (a reading's ore list, links and colours): shown by the window's hover box, as on the
+        // game's own map, not in the one-line status text, which printed the markup and cut it off (WM-0059).
+        hover = text.ToString().Trim().Replace("\r", "");
     }
+
+    /// <summary>What the markers and layers under the cursor say, as VTML for a hover box; empty for nothing.</summary>
+    public string HoverText => hover;
 
     /// <summary>A right-click goes to the markers and layers first, as on the game's own map: a waypoint opens its editor,
     /// a prospecting reading asks to be deleted. True when one took it.</summary>

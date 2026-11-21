@@ -17,6 +17,8 @@ public sealed class BaseRaster
 {
     public const int Version = 1;
     public const long MaxTexels = 8192L * 4096;
+    /// <summary>Texels a side of the blocks <see cref="Bake"/> hands to its workers.</summary>
+    public const int Block = 16;
     public int Width, Height;
     public byte[] Rgba;
 
@@ -36,7 +38,11 @@ public sealed class BaseRaster
         var raster = new BaseRaster { Width = width, Height = height, Rgba = new byte[width * height * 4] };
         var kinds = new byte[width * height];
         double texelX = t.Width / width, texelZ = t.Height / height;
-        int rows = 0, next = -1;
+        // The workers take blocks of Block x Block texels in turn, each walked row by row (0.5.5, EA-0194): the terrain
+        // provider's grids are tiled (Earth: 6-degree tiles, a small shared cache of decoded ones), and whole rows had every
+        // thread cross dozens of tiles in a latitude of its own. The same texels either way.
+        int across = (width + Block - 1) / Block, down = (height + Block - 1) / Block, blocks = across * down;
+        int done = 0, next = -1;
         Exception failure = null;
         // Sampling dominates the bake. Each worker owns its sampler (providers keep per-thread caches)
         // and runs below normal priority, so a bake during play leaves the game's threads their time.
@@ -48,20 +54,24 @@ public sealed class BaseRaster
                 try
                 {
                     var sample = samplers();
-                    for (int z; (z = Interlocked.Increment(ref next)) < height && Volatile.Read(ref failure) == null;)
+                    for (int b; (b = Interlocked.Increment(ref next)) < blocks && Volatile.Read(ref failure) == null;)
                     {
                         token.ThrowIfCancellationRequested();
-                        double wz = (z + 0.5) * texelZ;
-                        for (int x = 0; x < width; x++)
+                        int x0 = b % across * Block, z0 = b / across * Block, x1 = Math.Min(width, x0 + Block), z1 = Math.Min(height, z0 + Block);
+                        for (int z = z0; z < z1; z++)
                         {
-                            var s = sample(t.StartX + (x + 0.5) * texelX, wz);
-                            int i = z * width + x;
-                            kinds[i] = s.Kind;
-                            raster.Rgba[i * 4 + 1] = Semantic.EncodeSigned(Semantic.RelativeHeight(s.Height, s.Depth, s.Kind, seaLevel), heightRange);
-                            raster.Rgba[i * 4 + 2] = s.Kind is TileData.Ice or TileData.Wall ? (byte)255 : (byte)0;
-                            raster.Rgba[i * 4 + 3] = 255;
+                            double wz = (z + 0.5) * texelZ;
+                            for (int x = x0; x < x1; x++)
+                            {
+                                var s = sample(t.StartX + (x + 0.5) * texelX, wz);
+                                int i = z * width + x;
+                                kinds[i] = s.Kind;
+                                raster.Rgba[i * 4 + 1] = Semantic.EncodeSigned(Semantic.RelativeHeight(s.Height, s.Depth, s.Kind, seaLevel), heightRange);
+                                raster.Rgba[i * 4 + 2] = s.Kind is TileData.Ice or TileData.Wall ? (byte)255 : (byte)0;
+                                raster.Rgba[i * 4 + 3] = 255;
+                            }
                         }
-                        progress?.Invoke(0.85 * Interlocked.Increment(ref rows) / height);
+                        progress?.Invoke(0.85 * Interlocked.Increment(ref done) / blocks);
                     }
                 }
                 catch (Exception e) { Interlocked.CompareExchange(ref failure, e, null); }

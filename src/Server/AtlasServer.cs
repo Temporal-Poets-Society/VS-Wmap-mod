@@ -102,9 +102,16 @@ public sealed class AtlasServer : IDisposable
     {
         source = WorldSource.Create(api, config);
         cache = Path.Combine(api.GetOrCreateDataPath("Wmap"), "server", source.Info.CacheId);
+        // This world's cache marked as used, other worlds' unused for two weeks removed (WM-0057), off the main thread.
+        string folder = cache;
+        Task.Run(() =>
+        {
+            try { int removed = TileCache.Prune(folder, TileCache.Unused); if (removed > 0) api.Logger.Notification("[wmap] Removed {0} chart caches unused for {1} days", removed, TileCache.Unused.TotalDays); }
+            catch (Exception e) { api.Logger.Warning("[wmap] Could not clean old chart caches: {0}", e.Message); }
+        });
         StartWorkers(Math.Clamp(config.Threads / 2, 1, 4));
         Exploration.Start(source.Info, PlanetRadius(source.Info, config.PlanetScale), source.Samplers != null);
-        api.Logger.Notification("[wmap] {0}; ring {1} x {2}; wrap {3}; {4} river segments", source.Info.Source, source.Info.Width, source.Info.Height, source.Info.Wraps, source.Rivers?.Count ?? 0);
+        api.Logger.Notification("[wmap] {0}; ring {1} x {2}; wrap {3}; {4} river segments", source.Info.Source, source.Info.Width, source.Info.Height, source.Info.Wraps, source.RiverCount);
         if (source.Samplers != null)
         {
             // Announce the planned size now; clients then request only detail finer than it.
@@ -343,6 +350,7 @@ public sealed class AtlasServer : IDisposable
             string path = Path.Combine(cache, $"world-{BaseRaster.Version}-{width}x{height}.wmr");
             byte[] packed = null;
             BaseRaster raster = null;
+            bool baked = false;
             if (File.Exists(path))
             {
                 try { packed = File.ReadAllBytes(path); if (!Verified(path, packed)) { BaseRaster.Unpack(packed); WriteDigest(path, packed); } }
@@ -352,7 +360,9 @@ public sealed class AtlasServer : IDisposable
             {
                 var watch = Stopwatch.StartNew();
                 api.Logger.Notification("[wmap] Charting the whole world once: {0} x {1} texels, {2:0.#} blocks each, {3} threads", width, height, t.Width / width, config.Threads);
-                raster = BaseRaster.Bake(t, width, height, source.Info.SeaLevel, source.Samplers, source.Rivers, config.Threads, stop.Token, p => baseProgress = (float)p, source.Info.ChartHeightRange);
+                try { raster = BaseRaster.Bake(t, width, height, source.Info.SeaLevel, source.Samplers, source.Rivers, config.Threads, stop.Token, p => baseProgress = (float)p, source.Info.ChartHeightRange); }
+                finally { source.ReleaseRivers(); }
+                baked = true;
                 packed = raster.Pack();
                 // Caching is optional: a chart that could not be written is still published.
                 try { TileCodec.WriteAtomic(path, packed); WriteDigest(path, packed); }
@@ -363,10 +373,34 @@ public sealed class AtlasServer : IDisposable
             basePacked = packed;
             // Kept unpacked for the server's line of sight and survival clients' blocks (WM-D63).
             Exploration.SetChart(raster ?? BaseRaster.Unpack(packed));
-            if (source.Biome != null) BakeClimate(t, width, height);
+            raster = null;
+            if (source.Biome != null) baked |= BakeClimate(t, width, height);
+            if (baked) GiveBackMemory();
         }
         catch (OperationCanceledException) { }
         catch (Exception e) { api.Logger.Error("[wmap] World chart bake failed; detail tiles remain available: {0}", e); }
+    }
+
+    /// <summary>
+    /// After the chart or the climate raster was made: one blocking, compacting collection of the whole process, which gives
+    /// the system back the memory the bake left behind (0.5.5, WM-0055). Sampling a whole 1:10 Earth world allocates tens of
+    /// gigabytes (Earth's terrain model; the climate raster at about 4.7 GB/s for 13 s), the heap grows to 9 GB, and nothing
+    /// collects it afterwards: a dedicated server kept 10.7 GB against 4.5 GB for a start with the chart in its cache, 2.8 GB
+    /// of it free space in the heap, and a single-player game 13-18 GB more for the rest of the session. Never after a chart
+    /// read from the cache. It pauses the process once (logged with its length), right after the bake.
+    /// </summary>
+    void GiveBackMemory()
+    {
+        if (disposed) return;
+        var watch = Stopwatch.StartNew();
+        long heap = GC.GetTotalMemory(false);
+        using var process = System.Diagnostics.Process.GetCurrentProcess();
+        long before = process.PrivateMemorySize64;
+        System.Runtime.GCSettings.LargeObjectHeapCompactionMode = System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+        process.Refresh();
+        api.Logger.Notification("[wmap] Gave back the bake's memory in {0} ms: heap {1:0} -> {2:0} MiB, process {3:0.0} -> {4:0.0} GiB",
+            watch.ElapsedMilliseconds, heap / 1048576.0, GC.GetTotalMemory(false) / 1048576.0, before / 1073741824.0, process.PrivateMemorySize64 / 1073741824.0);
     }
 
     // A cached chart is checked by unpacking it (up to 134 MB of pixels) unless the SHA-256 written beside it when it was
@@ -392,9 +426,11 @@ public sealed class AtlasServer : IDisposable
         catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { /* Next start checks by unpacking. */ }
     }
 
-    /// <summary>The climate raster for the atlas's Terrain colours, cached like the chart (by the biome source's identity).</summary>
-    void BakeClimate(Topology t, int chartWidth, int chartHeight)
+    /// <summary>The climate raster for the atlas's Terrain colours, cached like the chart (by the biome source's identity).
+    /// True when it was sampled now, not read from the cache.</summary>
+    bool BakeClimate(Topology t, int chartWidth, int chartHeight)
     {
+        bool baked = false;
         try
         {
             var (width, height) = ClimateRaster.SizeFor(chartWidth, chartHeight);
@@ -410,6 +446,7 @@ public sealed class AtlasServer : IDisposable
                 var watch = Stopwatch.StartNew();
                 // On Earth's built-in heights where it has them (EarthHeights): sampled everywhere, GLO-90 decoded tiles all over
                 // the globe. Far terrain's biome tiles keep source.Biome, the column's own heights.
+                baked = true;
                 packed = ClimateRaster.Pack(ClimateRaster.Bake(t, width, height, source.WorldBiome ?? source.Biome, config.Threads, stop.Token), width, height);
                 try { TileCodec.WriteAtomic(path, packed); WriteDigest(path, packed); }
                 catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { api.Logger.Warning("[wmap] Could not cache the climate raster: {0}", e.Message); }
@@ -423,6 +460,7 @@ public sealed class AtlasServer : IDisposable
         }
         catch (OperationCanceledException) { }
         catch (Exception e) { api.Logger.Error("[wmap] Climate raster bake failed; Terrain colours stay by height: {0}", e); }
+        return baked;
     }
 
     void Work()

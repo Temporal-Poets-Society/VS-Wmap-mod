@@ -80,6 +80,11 @@ public sealed class WmapMinimapLayer : MapLayer, IDisposable
         frame.ParallelStep = GeoGrid.Step((client.Info.PoleDistance > 0 ? client.Info.PoleDistance / 90 : t.Height / 180) * camera.Scale, 110 * frame.Gui);
         var shader = client.Api.Render.CurrentActiveShader;
         shader?.Stop();
+        // Drawn in front of the HUD's background (50) but without writing depth: the layers after this one (other
+        // mods' overlays such as Prospect Together's chunks, 2D textures at 50) would otherwise fail the depth test
+        // against the chart and vanish (WM-0060). Tiles and winds draw back to front, so nothing here needs the depth.
+        bool depthWrites = OpenTK.Graphics.OpenGL.GL.GetBoolean(OpenTK.Graphics.OpenGL.GetPName.DepthWritemask);
+        OpenTK.Graphics.OpenGL.GL.DepthMask(false);
         try
         {
             if (!client.Renderer.Begin(client.Api.Render, frame, !frame.Development)) return;
@@ -100,6 +105,7 @@ public sealed class WmapMinimapLayer : MapLayer, IDisposable
         }
         finally
         {
+            OpenTK.Graphics.OpenGL.GL.DepthMask(depthWrites);
             client.Api.Render.GlToggleBlend(true);
             shader?.Use();
         }

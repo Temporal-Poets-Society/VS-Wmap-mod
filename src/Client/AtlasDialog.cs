@@ -53,8 +53,10 @@ public sealed class AtlasDialog : GuiDialog
                 x += 158;
             }
             SingleComposer.AddSmallButton("° / °′", () => { config.DecimalDegrees = !config.DecimalDegrees; api.StoreModConfig(config, "wmap.json"); return true; }, ElementBounds.Fixed(x, 34, 70, 28))
-            .AddSmallButton("Day / Night", () => { config.DayNightOverlay = !config.DayNightOverlay; api.StoreModConfig(config, "wmap.json"); return true; }, ElementBounds.Fixed(x + 78, 34, 110, 28));
-            x += 196;
+            .AddSmallButton("Day / Night", () => { config.DayNightOverlay = !config.DayNightOverlay; api.StoreModConfig(config, "wmap.json"); return true; }, ElementBounds.Fixed(x + 78, 34, 110, 28))
+            // The far view on or off (0.5.5, WM-0053), as Ctrl+Shift+F: the chat line says which.
+            .AddSmallButton("Far view", () => { api.ShowChatMessage(client.SetFarView(!config.FarTerrain)); return true; }, ElementBounds.Fixed(x + 196, 34, 90, 28));
+            x += 294;
             // Worldwide weather and monthly prevailing winds; gameplay requires a Jonas barometer.
             double labelX = x + 6;
             if (client.Winds.Available)
@@ -85,7 +87,11 @@ public sealed class AtlasDialog : GuiDialog
             .AddDynamicText("", CairoFont.WhiteSmallText(), ElementBounds.Fixed(0, height + mapY + 8, width, 25), "position")
             .AddDynamicText("", CairoFont.WhiteSmallText(), ElementBounds.Fixed(0, height + mapY + 32, width, 25), "status")
             .AddStaticText("Drag to pan · Wheel to zoom · Space: follow · Home: whole world · Right-click: add or edit a waypoint (creative: or teleport) · Esc: close", CairoFont.WhiteDetailText(), ElementBounds.Fixed(0, height + mapY + 58, width, 20))
+            // Waypoint, reading and other layers' text by the cursor, VTML as on the game's map (WM-0059). Added after
+            // the map so it draws over it.
+            .AddHoverText("", CairoFont.WhiteDetailText(), 350, mapBounds.FlatCopy(), "hoverText")
             .EndChildElements().Compose();
+            SingleComposer.GetHoverText("hoverText").SetAutoWidth(true);
             SingleComposer.GetDropDown("show").SetSelectedValue(ShowCodes.Where(Shows).ToArray());
             SingleComposer.GetDropDown("automark").SetSelectedValue(AutoCodes().Where(AutoMarks).ToArray());
             SingleComposer.GetDropDown("ores").SetSelectedValue(config.ProspectingOre);
@@ -148,6 +154,18 @@ public sealed class AtlasDialog : GuiDialog
         SingleComposer?.GetDynamicText("modeLabel")?.SetNewText(ModeLabel());
     }
     string ModeLabel() => (client.Tiles.Development ? "Creative" : "Game") + " · " + WmapConfig.StyleName(config.DefaultStyle);
+    string shownHover = "";
+    public override void OnFinalizeFrame(float dt)
+    {
+        base.OnFinalizeFrame(dt);
+        if (SingleComposer?.GetHoverText("hoverText") is not { } box) return;
+        // Recomposed only when the text changes; shown while the cursor is over the map, as the game's map does.
+        string text = map.HoverText ?? "";
+        if (text != shownHover) { shownHover = text; box.SetNewText(text); }
+        bool over = map.Bounds.PointInside(capi.Input.MouseX, capi.Input.MouseY) && Focused;
+        box.SetVisible(over);
+        box.SetAutoDisplay(over);
+    }
     public override void OnGuiClosed() { client.Tiles.CloseView(); map.ReleaseDrag(); base.OnGuiClosed(); }
     public override void OnKeyDown(KeyEvent args)
     {

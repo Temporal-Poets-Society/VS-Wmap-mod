@@ -18,7 +18,7 @@ All of these are optional. World Map was checked with the versions in brackets.
 
 | Mod | What it adds to World Map |
 | --- | --- |
-| **Earth** (2.0.0) | The whole planet charted from Earth's terrain, with its rivers and lakes; latitude and longitude; the far view; climate colours on the Terrain style and the far view; the air pressure on the Jonas barometer; Earth's winds through Sea |
+| **Earth** (2.0.0, 2.0.1) | The whole planet charted from Earth's terrain, with its rivers and lakes; latitude and longitude; the far view; climate colours on the Terrain style and the far view; the air pressure on the Jonas barometer; Earth's winds through Sea |
 | **Cylinder World** (1.1.1) | The map wraps east to west across the seam without a jump; the seam band, the polar ice and the walls. Without Earth: an approximate map of continents and oceans with invented heights, and no far view |
 | **Sea** (0.6.1) | The winds on the atlas and minimap, through the Jonas barometer; Sea can shade the far sea |
 | **Hydrology** (0.6.2) | No direct link: its rivers and water show on the map where you have been, as recorded terrain |

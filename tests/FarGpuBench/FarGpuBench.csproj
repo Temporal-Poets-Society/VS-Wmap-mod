@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Far terrain's GPU time per pass, offscreen (WM-0054). Needs the mod built first (bin/Release/mod/Wmap.dll) and the
+       game's DLLs in .local/game (tools/Prepare-References.ps1). -->
+  <PropertyGroup>
+    <UseAppHost>false</UseAppHost><NoWarn>CA1416</NoWarn><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><LangVersion>12</LangVersion>
+    <Nullable>disable</Nullable><AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>
+    <RuntimeFrameworkVersion>10.0.0</RuntimeFrameworkVersion><RollForward>LatestPatch</RollForward>
+    <NetCoreRuntimeDir>$([System.IO.Directory]::GetDirectories('$(NetCoreRoot)shared\Microsoft.NETCore.App', '10.*')[0])</NetCoreRuntimeDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="$(NetCoreRuntimeDir)\System.*.dll" Exclude="$(NetCoreRuntimeDir)\System.Private.*.dll;$(NetCoreRuntimeDir)\System.IO.Compression.Native.dll" Private="false" />
+    <Reference Include="$(NetCoreRuntimeDir)\System.Private.CoreLib.dll;$(NetCoreRuntimeDir)\System.Private.Uri.dll;$(NetCoreRuntimeDir)\netstandard.dll;$(NetCoreRuntimeDir)\mscorlib.dll" Private="false" />
+    <Reference Include="..\..\bin\Release\mod\Wmap.dll" />
+    <Reference Include="..\..\.local\game\VintagestoryAPI.dll" />
+    <Reference Include="..\..\.local\game\OpenTK.Graphics.dll" />
+    <Reference Include="..\..\.local\game\OpenTK.Core.dll" />
+    <Reference Include="..\..\.local\game\OpenTK.Mathematics.dll" />
+    <Reference Include="..\..\.local\game\protobuf-net.dll" />
+    <Reference Include="..\..\.local\game\Newtonsoft.Json.dll" />
+  </ItemGroup>
+</Project>

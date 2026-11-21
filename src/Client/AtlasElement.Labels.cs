@@ -148,7 +148,6 @@ public sealed partial class AtlasElement
         string Position(double x, double z) => geography != null ? GeoFormat.Format(geography(t.Canonical(x), z), config.DecimalDegrees) : $"X {t.Canonical(x):0}, Z {z:0}";
         string position = !surface ? "Atlas available in the surface dimension only" : "You: " + Position(player.X, player.Z);
         if (surface && Bounds.PointInside(api.Input.MouseX, api.Input.MouseY) && wz >= 0 && wz < t.Height) position += "    Cursor: " + Position(wx, wz);
-        if (surface && hover.Length > 0) position += "    " + hover;
         bool cursor = surface && Bounds.PointInside(api.Input.MouseX, api.Input.MouseY) && wz >= 0 && wz < t.Height;
         bool windSight = development || sight != null;
         if (cursor && windSight && client.Winds.Describe(t.Canonical(wx), wz) is { } wind) position += "    " + wind;

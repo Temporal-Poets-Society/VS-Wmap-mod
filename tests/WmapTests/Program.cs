@@ -553,6 +553,80 @@ foreach (var (distance, cell0) in new[] { (8192.0, 32.0), (16384.0, 16.0), (2048
 }
 Check(FarMesh.Build(8192, FarMesh.NearBandCell).Snap == FarMesh.Build(8192, FarMesh.CellFor(1)).Snap, "the near band's finer rings keep the normal mesh's snap");
 
+// old cache folders (0.5.5, WM-0057): another world's cache unused for 14 days goes, the current one is kept and marked,
+// recent ones and folders that are not a cache id stay
+{
+    string root = Path.Combine(Path.GetTempPath(), "wmap-prune-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        var now = new DateTime(2026, 11, 19, 12, 0, 0, DateTimeKind.Utc);
+        string Id(char c) => new string(c, 64);
+        string Make(string name, double daysAgo)
+        {
+            string p = Path.Combine(root, name);
+            Directory.CreateDirectory(p);
+            File.WriteAllText(Path.Combine(p, "world-1-8x4.wmr"), "x");
+            Directory.SetLastWriteTimeUtc(p, now.AddDays(-daysAgo));
+            return p;
+        }
+        string current = Make(Id('a'), 40), old = Make(Id('b'), 20), recent = Make(Id('c'), 3), other = Make("recordings", 90), shortName = Make("abc", 90);
+        int removed = TileCache.Prune(current, TileCache.Unused, now);
+        Check(removed == 1 && !Directory.Exists(old), "cache pruning removes another world's cache unused for 14 days");
+        Check(Directory.Exists(current) && Directory.GetLastWriteTimeUtc(current) == now, "cache pruning keeps the current world's cache and marks it used");
+        Check(Directory.Exists(recent) && Directory.Exists(other) && Directory.Exists(shortName), "cache pruning keeps recent caches and folders that are not a cache id");
+        Check(TileCache.Prune(Path.Combine(root, Id('d')), TileCache.Unused, now) == 0 && Directory.Exists(Path.Combine(root, Id('d'))), "cache pruning creates a missing current folder");
+    }
+    finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+}
+
+// far terrain mesh, drawn in part (0.5.5, WM-0054): every triangle with a fragment the shaders keep is drawn (a fragment's
+// distance is interpolated between its corners, after the stitch moves edge vertices), and most of those under the terraces
+// are not
+{
+    var random = new Random(5);
+    foreach (var (distance, cell0) in new[] { (8192.0, FarMesh.NearBandCell), (2048.0, 32.0), (8192.0, 32.0) })
+    {
+        var mesh = FarMesh.Build(distance, cell0);
+        var v = mesh.Vertices; var idx = mesh.Indices;
+        var firsts = new int[2 * mesh.Runs.Length + 1]; var counts = new int[firsts.Length];
+        Check(mesh.Runs.Sum(r => (r.I1 - r.I0 + 1) * 6) == idx.Length && mesh.Runs[0].First == 0, "far mesh runs cover every quad once, in index order");
+        bool runsInOrder = true;
+        for (int i = 1; i < mesh.Runs.Length; i++) runsInOrder &= mesh.Runs[i].First == mesh.Runs[i - 1].First + (mesh.Runs[i - 1].I1 - mesh.Runs[i - 1].I0 + 1) * 6;
+        Check(runsInOrder, "far mesh runs follow each other in the index buffer");
+        foreach (var (from, to) in new[] { (288.0, distance), (752.0, distance), (48.0, 2048.0), (1500.0, 1700.0), (0.0, distance) })
+        for (int k = 0; k < 6; k++)
+        {
+            double cx = (random.NextDouble() - 0.5) * mesh.Snap, cz = (random.NextDouble() - 0.5) * mesh.Snap;
+            int n = mesh.Ranges(cx, cz, from, to, firsts, counts);
+            var drawn = new bool[idx.Length / 3];
+            bool ordered = true; int last = -1;
+            for (int r = 0; r < n; r++)
+            {
+                ordered &= firsts[r] > last && counts[r] > 0 && counts[r] % 6 == 0 && firsts[r] + counts[r] <= idx.Length;
+                last = firsts[r] + counts[r];
+                for (int i = firsts[r]; i < firsts[r] + counts[r]; i += 3) drawn[i / 3] = true;
+            }
+            Check(ordered, "far mesh ranges are ordered, whole quads, joined and inside the index buffer");
+            int missing = 0, hidden = 0, hiddenDrawn = 0;
+            for (int tri = 0; tri < drawn.Length; tri++)
+            {
+                double lo = double.MaxValue, hi = double.MinValue;
+                for (int corner = 0; corner < 3; corner++)
+                {
+                    int o = idx[tri * 3 + corner] * 4;
+                    double d = Math.Sqrt(Math.Pow(v[o] - v[o + 2] - cx, 2) + Math.Pow(v[o + 1] - v[o + 3] - cz, 2));
+                    lo = Math.Min(lo, d); hi = Math.Max(hi, d);
+                }
+                bool shows = hi >= from && lo <= to;
+                if (shows && !drawn[tri]) missing++;
+                if (!shows) { hidden++; if (drawn[tri]) hiddenDrawn++; }
+            }
+            Check(missing == 0, $"far mesh ranges keep every triangle that can show (from {from}, to {to}: {missing} missing)");
+            if (from >= 288 && hidden > 2000) Check(hiddenDrawn < hidden / 4, $"far mesh ranges leave out most hidden triangles (from {from}: {hiddenDrawn} of {hidden} drawn)");
+        }
+    }
+}
+
 // far terrain tile windows: toroidal slots, unwrapped ids across the seam, texel centres as tiles are sampled
 foreach (var (width, level, radius) in new[] { (204800.0, 2, 1536.0), (204800.0, 6, 8192.0), (204800.0 + 300, 2, 1536.0), (100000.0 + 77, 6, 16384.0), (5000.0, 2, 1024.0) })
 {
@@ -1302,6 +1376,38 @@ Check(partial[119 * DayGrid.Width] == 0 && partial[120 * DayGrid.Width] == 132 &
     int leaked = 0;
     Parallel.For(0, 256, new ParallelOptions { MaxDegreeOfParallelism = 8 }, i => { if (During()) Interlocked.Increment(ref leaked); Thread.SpinWait(2000); });
     Check(leaked == 0, $"pool threads left on GLO-90 after the raster ({leaked} on built-in heights)");
+}
+// The chart and the climate raster sampled in blocks (0.5.5, EA-0194): every texel exactly once, at its own centre, the same
+// whatever the thread count, also where the size is not a multiple of the block
+{
+    var world = new Topology { StartX = 300, Width = 41000, Height = 19000, Wraps = true };
+    foreach (var (w, h) in new[] { (100, 37), (16, 16), (17, 1), (1, 40), (64, 32) })
+    {
+        double tx = world.Width / w, tz = world.Height / h;
+        BiomeSample Biome(double x, double z) => new((byte)((int)(x / 7) & 255), (byte)((int)(z / 3) & 255), (byte)((int)(x + z) & 255));
+        var calls = new System.Collections.Concurrent.ConcurrentDictionary<(double, double), int>();
+        var one = ClimateRaster.Bake(world, w, h, (x, z) => { calls.AddOrUpdate((x, z), 1, (_, n) => n + 1); return Biome(x, z); }, 1, CancellationToken.None);
+        var many = ClimateRaster.Bake(world, w, h, Biome, 7, CancellationToken.None);
+        bool exact = true;
+        for (int z = 0; z < h; z++) for (int x = 0; x < w; x++)
+        {
+            var s = Biome(world.StartX + (x + 0.5) * tx, (z + 0.5) * tz);
+            int o = (z * w + x) * 4;
+            exact &= one[o] == s.Forest && one[o + 1] == s.Temperature && one[o + 2] == s.Rain && one[o + 3] == 255;
+        }
+        Check(exact && one.AsSpan().SequenceEqual(many), $"climate raster {w} x {h} in blocks: each texel at its centre, the same on 1 and 7 threads");
+        Check(calls.Count == w * h && calls.Values.All(n => n == 1), $"climate raster {w} x {h} in blocks: every texel sampled once ({calls.Count} of {w * h})");
+        MapSample Ground(double x, double z) => new(110 + (int)(Math.Sin(x * 0.001) * 40 + Math.Cos(z * 0.002) * 30), 0, Math.Sin(x * 0.0007 + z * 0.0003) > 0.6 ? TileData.Water : TileData.Land);
+        var c1 = BaseRaster.Bake(world, w, h, 110, () => Ground, null, 1, CancellationToken.None);
+        var c7 = BaseRaster.Bake(world, w, h, 110, () => Ground, null, 7, CancellationToken.None);
+        bool heights = true;
+        for (int z = 0; z < h; z++) for (int x = 0; x < w; x++)
+        {
+            var s = Ground(world.StartX + (x + 0.5) * tx, (z + 0.5) * tz);
+            heights &= c1.Rgba[(z * w + x) * 4 + 1] == Semantic.EncodeSigned(Semantic.RelativeHeight(s.Height, s.Depth, s.Kind, 110), Semantic.DefaultHeightRange);
+        }
+        Check(heights && c1.Rgba.AsSpan().SequenceEqual(c7.Rgba), $"world chart {w} x {h} in blocks: each texel's height at its centre, the same on 1 and 7 threads");
+    }
 }
 // A four-block sample's height is its cell's mean generated ground (WM-0021, WM-D61).
 {

@@ -6,6 +6,7 @@
 | --- | --- |
 | **M** | Open or close the atlas. This is the game's own world-map key ("Wmap: world atlas" in the key settings), so a key you set for the world map works too |
 | **Ctrl+Shift+V** | Show or hide the coordinates box ("Wmap: latitude and longitude") |
+| **Ctrl+Shift+F** | Switch the far view off or on ("Wmap: far view on/off"); the choice is saved |
 | **F6** / **Ctrl+F6** | The game's keys: show or hide the minimap / move it to another corner |
 
 In the atlas:
@@ -24,6 +25,7 @@ Commands that start with a dot run in your own game; those with a slash run on t
 | --- | --- |
 | `.wmap` | Open the atlas |
 | `.wmap vanilla` | Open the game's own map |
+| `.wmap far`, `.wmap far on`, `.wmap far off` | The far view: whether it is drawn now (and, while the world is being charted, how far charting has come), or switch it on or off. Off frees its video memory; the choice is saved in your `wmap.json` |
 | `.wmap mid` | The mid-distance view (a prototype): what it draws and what it costs the graphics card |
 | `.wmap mid recorded`, `.wmap mid terraces`, `.wmap mid lights` | Switch that part of the mid-distance view on or off; add `on` or `off` to choose. The choice is saved in your `wmap.json` |
 | `.wmap fardebug albedo` | Show the far view's colours alone, without light or haze (for comparing colours on screen); `.wmap fardebug lit` shows it lit, without haze or fog; `.wmap fardebug off` goes back to normal |

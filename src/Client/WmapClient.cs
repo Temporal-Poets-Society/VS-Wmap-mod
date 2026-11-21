@@ -79,6 +79,12 @@ public sealed class WmapClient : IDisposable
         string cache = Path.Combine(data, "client", info.CacheId), observed = Path.Combine(data, "observed", info.ObservationId);
         Tiles = new TileClient(channel, info, config, cache, observed);
         this.channel = channel; CacheFolder = cache;
+        // This world's tile cache marked as used, others unused for two weeks removed (WM-0057); recordings are never touched.
+        Task.Run(() =>
+        {
+            try { int removed = TileCache.Prune(cache, TileCache.Unused); if (removed > 0) api.Logger.Notification("[wmap] Removed {0} tile caches unused for {1} days", removed, TileCache.Unused.TotalDays); }
+            catch (Exception e) { api.Logger.Warning("[wmap] Could not clean old tile caches: {0}", e.Message); }
+        });
         AutoMarks = new AutoMarker(api, config, r => channel?.SendPacket(r));
         BaseMap = new BaseMapClient(channel, cache);
         Climate = new BaseMapClient(channel, cache, true);
@@ -200,6 +206,33 @@ public sealed class WmapClient : IDisposable
         }
     }
     public void ReceiveChart(BaseChunk chunk) { BaseMap.Receive(chunk); Climate.Receive(chunk); }
+
+    /// <summary>
+    /// Far terrain on or off for this player, without a restart (0.5.5, WM-0053): saved in wmap.json (<c>FarTerrain</c>).
+    /// Off disposes it, which frees its mesh, tiles, recordings, cell map and programs and gives back the camera's far plane;
+    /// on builds it again. Returns a line saying what it does now.
+    /// </summary>
+    public string SetFarView(bool on)
+    {
+        Config.FarTerrain = on;
+        Api.StoreModConfig(Config, "wmap.json");
+        Far?.Dispose(); Far = null;
+        try { Far = new FarTerrain(Api, this); }
+        catch (Exception e) { Api.Logger?.Error("[wmap] Far terrain could not start: {0}", e); }
+        return FarViewStatus();
+    }
+
+    /// <summary>The far view's state for chat: on (and why it may not draw yet), or off and how to bring it back.</summary>
+    public string FarViewStatus()
+    {
+        if (!Config.FarTerrain) return "World Map: far view off. Ctrl+Shift+F, the atlas's Far view button or .wmap far on brings it back.";
+        string status = Far?.Status;
+        if (string.IsNullOrEmpty(status) || status.StartsWith("on", StringComparison.Ordinal)) return "World Map: far view on.";
+        if (status.StartsWith("off", StringComparison.Ordinal)) return $"World Map: far view on, but not drawn: {status.Substring(3).TrimStart(':', ' ')}.";
+        // Far terrain is drawn from the world chart (WM-0058): say how far it has come.
+        string progress = Info?.BaseProgress is > 0 and < 1 ? $" ({Info.BaseProgress:P0} charted)" : "";
+        return $"World Map: far view on, {status}{(status.Contains("chart", StringComparison.Ordinal) ? progress : "")}.";
+    }
 
     /// <summary>Latitude/longitude for readouts, once an integration provides it.</summary>
     public Func<double, double, GeoPosition> Geography

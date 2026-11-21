@@ -246,8 +246,16 @@ public static class MidDistanceChecks
                     variants++;
                     if (plain != null && shadow == 0 && ssao == 0 && godrays == 0 && lights == 0) plain[k] = p; else GL.DeleteProgram(p);
                 }
+                // The cover pass's programs (0.5.5, WM-0054): farterrain and farcells with WMAP_COVER, as FarTerrain loads them.
+                foreach (string name in new[] { "farterrain", "farcells" })
+                {
+                    string vertex = FarTerrainChecks.Expand(File.ReadAllText(Path.Combine(shaders, name + ".vsh")), includes, prefix);
+                    string fragment = FarTerrainChecks.Expand(File.ReadAllText(Path.Combine(shaders, name + ".fsh")), includes, prefix + "#define WMAP_COVER 1\n");
+                    GL.DeleteProgram(FarTerrainChecks.Link(vertex, fragment));
+                    variants++;
+                }
             }
-            return $"{variants} program variants linked (farterrain, farcells, farcellmap, farlights); texture units: {string.Join("; ", plans.Values)}";
+            return $"{variants} program variants linked (farterrain, farcells, farcellmap, farlights, and the cover's farterrain and farcells); texture units: {string.Join("; ", plans.Values)}";
         }
         finally
         {

@@ -15,6 +15,12 @@ where both exist.
   at their height; high ground turns to scree, rock and snow by its climate.
 - **Where you have been,** the land is drawn as you saw it, at its recorded height and colour.
 
+It is drawn from the **world chart**, which the server makes once for each world when it first starts (a minute or two
+on a 1:10 world, longer while the new world's first chunks are being made; again after an update of Earth, Cylinder
+World or World Map). Until the chart is ready there is no far view: `.wmap far` says how far charting has come.
+
+Switch the far view off and on with **Ctrl+Shift+F**, the atlas's **Far view** button or `.wmap far off` / `.wmap far on`.
+
 It needs Earth: Cylinder World alone predicts only coastlines with invented heights, so the far view stays off there.
 It is drawn on the world's surface only, and not at all when your view distance comes within 64 blocks of
 `FarTerrainDistance`.
@@ -61,9 +67,11 @@ and so on switch a part off without restarting (see [Commands and keys](Commands
 
 ## Performance
 
-The far view reuses the world chart the atlas already has. On a mid-range graphics card (tested on an AMD RX 6600) it
-costs about a millisecond a frame with the near band and the mid-distance view. To make it cheaper, lower
-`FarTerrainDistance`, set `FarTerrainDetail` to `0`, or switch off `FarTerrainNearBand` or the mid-distance parts. It
+The far view reuses the world chart the atlas already has. On a mid-range graphics card (an AMD RX 6600 at 1920 x 1080,
+view distance 384, a 1:10 Earth world) it takes about 1.3 ms of the graphics card a frame with the near band and the
+mid-distance view (2.2 ms before 0.5.5), half a millisecond of it the terraces. To make it cheaper, switch off the
+terraces (`.wmap mid terraces off`), lower `FarTerrainDistance`, set `FarTerrainDetail` to `0`, or switch off
+`FarTerrainNearBand` or the other mid-distance parts; Ctrl+Shift+F switches the far view off altogether. It
 uses roughly 30 MiB of extra video memory for the mid-distance view and about 12 MiB for the near band, besides the world
 chart itself (about 170 MiB at full size; the server's `WorldChartSize: 4096` needs a quarter of that).
 

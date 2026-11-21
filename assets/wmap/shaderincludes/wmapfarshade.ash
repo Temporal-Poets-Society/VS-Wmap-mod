@@ -110,16 +110,17 @@ void main()
     // far land lies past that point and below the clouds, the depth of the point at the fade's start along the ray: every game
     // block from there on lies behind it, every nearer one in front. Below the clouds no cloud can lie between the eye and that
     // land, so none is hidden; far land up in the clouds keeps its own depth.
-    if (wmapCover.x > 2.5)
-    {
-        if (gameFade <= 0.0 || wmapDistance <= gameFade || wmapCover.z <= 0.0 || wmapPos.y >= wmapCover.z) discard;
-        vec4 clip = projectionMatrix * viewMatrix * vec4(wmapPos * (gameFade / wmapDistance), 1.0);
-        gl_FragDepth = ((gl_DepthRange.far - gl_DepthRange.near) * clip.z / clip.w + gl_DepthRange.near + gl_DepthRange.far) * 0.5;
-        wmapOut(vec4(0.0), vec4(0.0));
-        return;
-    }
-    gl_FragDepth = gl_FragCoord.z;
-    // The depth pass: nothing more (its colour is masked).
+    // The cover is drawn with its own program, compiled with WMAP_COVER (0.5.5, WM-0054): a shader that writes gl_FragDepth
+    // anywhere has every fragment shaded before its depth test, so up to 0.5.4 every pass shaded far ground hidden behind
+    // nearer far ground, and a depth pass before the colour saved nothing.
+#ifdef WMAP_COVER
+    if (gameFade <= 0.0 || wmapDistance <= gameFade || wmapCover.z <= 0.0 || wmapPos.y >= wmapCover.z) discard;
+    vec4 clip = projectionMatrix * viewMatrix * vec4(wmapPos * (gameFade / wmapDistance), 1.0);
+    gl_FragDepth = ((gl_DepthRange.far - gl_DepthRange.near) * clip.z / clip.w + gl_DepthRange.near + gl_DepthRange.far) * 0.5;
+    wmapOut(vec4(0.0), vec4(0.0));
+    return;
+#endif
+    // A depth pass (pass 1, the smoke checks' depth reads): nothing more (its colour is masked).
     if (wmapCover.x > 0.5 && wmapCover.x < 1.5)
     {
         wmapOut(vec4(0.0), vec4(0.0));

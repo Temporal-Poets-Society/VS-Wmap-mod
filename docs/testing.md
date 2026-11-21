@@ -2,6 +2,159 @@
 
 Updated 2026-10-16. Test environment: Windows 11, Vintage Story 1.22.7, .NET SDK 8.0.419 and runtime 10.0, AMD Radeon RX 6600, 16-core/32-thread CPU.
 
+## 0.5.5: release
+
+21 November 2026, from `main` (0.5.5-rc.2, WM-0059 and WM-0060) with the version bump (WM-D70).
+
+* `release/wmap_0.5.5.zip`: 430,938 bytes, SHA-256 `c31a9b316df1411875c4f5b1ebb51c93afd32503d5d9c2a261ddb4bfda573ff4`.
+* Core suite: **109135 assertions PASS**.
+* Earth smoke with the public server's versions, Earth 2.1.4, Cylinder World 1.1.1 and Hydrology 0.6.2: **PASS**, every
+  check (WM-0056's coast check, which stops with Earth 2.2 rcs, passes with 2.1.4).
+* AgentBridge bench, plain world, Prospect Together 2.2.1 (WM-0059, WM-0060): a reading's hover box shows the whole ore
+  list with links; Prospect Together's chunks show on the atlas and the minimap, and on neither with 0.5.4.
+* Not checked: two or more players together on a server, NVIDIA or Intel graphics.
+
+## 0.5.5-rc.2: test build for the author's game
+
+20 November 2026, from `main` at `07eb8a9` (rc.1 and the chart in blocks below) with the version bump, at the release
+coordinator's request, to replace rc.1 (installed on 19 November, not yet started) beside Earth rc.11. Not tagged,
+pushed or uploaded.
+
+* `release/wmap_0.5.5-rc.2.zip`: 430,496 bytes, SHA-256 `5459a9218ba3d880aa74d96d65e169c8fb30707bf4527872ec79e48b1baafaa9`;
+  copied to `work\terrain-2.2\` with `Install-wmap-0.5.5-rc.2.ps1` (stops while the game runs; requires rc.1 as built,
+  SHA-256 `72db86f2…75eaec4`, as the only World Map in Mods and removes it, its copy staying in that folder; leaves
+  0.5.4's backup alone; installs and checks the pin) and `wmap-0.5.5-rc.2-test-notes.md`. The installer on a copy of the
+  Mods folder: rc.1 removed, rc.2 installed and checked, a second run refused.
+* Core suite: **109135 assertions PASS**.
+* Earth smoke with Earth 2.2.0-rc.10, Cylinder World 1.1.2, Hydrology 0.6.2, Sea 0.6.2: stops only at WM-0056's Nice
+  coast check, as with rc.1 (the same numbers; every check before it passing, the same 52 outputs).
+
+## 0.5.5: the chart and the climate raster in blocks (EA-0194, WM-D69)
+
+20 November 2026, worktree `blocks` (branch `claude/block-sweeps`), at the performance session's request.
+
+* Core suite: **109135 assertions PASS** (new: both bakes sample every texel once at its centre, the same on 1 and 7
+  threads, for sizes that are and are not multiples of the block).
+* Dedicated 1:10 server (Devkit's runner set up, started by hand; Earth 2.2.0-rc.10, Cylinder World 1.1.2, Hydrology
+  0.6.2, Sea 0.6.2; a new world, then charted again twice with its cache moved aside; Devkit's profiler on; another
+  session's Earth tests took about 2 cores meanwhile, the same for both builds):
+
+  | | create (rows) | rows (0.5.5-rc.1) | blocks |
+  | --- | --- | --- | --- |
+  | world chart | 77.5 s | 68.8 s | **64.6 s** |
+  | climate raster | 12.7 s | 13.7 s | **3.3 s** |
+  | allocated over the start (Devkit) | 159.5 GB | 150.3 GB | **75.5 GB** |
+  | heap peak / process peak | 12.7 / 13.4 GB | 11.5 / 13.3 GB | **6.3 / 8.9 GB** |
+  | give-back: heap, pause | 6727 to 4248 MiB, 1562 ms | 6022 to 4014 MiB, 2089 ms | 4191 to 3982 MiB, 1085 ms |
+  | settled | 4.28 GB | 4.05 GB | 4.01 GB |
+
+  The chart's file is 11.9 MiB in all three. Runs in `C:\VS mods\work\perf\wmap-blocks` (disposable).
+
+## 0.5.5-rc.1: test build for the author's game
+
+19 November 2026, from `main` (the 0.5.5 work below) with the version bump, at the release coordinator's request (the
+author: "build rc10 with also performance parts"), to be installed with Earth 2.2.0-rc.10. Not tagged, pushed or
+uploaded.
+
+* `release/wmap_0.5.5-rc.1.zip`: 430,123 bytes, SHA-256 `72db86f23bd5ea322c6d82349249f741a43a1bb0d1f7253d41f2a971575eaec4`;
+  copied to `work\terrain-2.2\` with `Install-wmap-0.5.5-rc.1.ps1` (stops while the game runs, moves the released
+  `wmap_0.5.4.zip`, SHA-256 `4d29ebcb…426408`, to `Backups\wmap-before-0.5.5-rc.1-<time>`, installs and checks the pin)
+  and `wmap-0.5.5-rc.1-test-notes.md`. The installer run on a copy of the Mods folder: 0.5.4 moved and checked, rc.1
+  installed and checked, a second run refused; it also refused while a smoke server outside `work\` ran.
+* Core suite: **109120 assertions PASS**.
+* Earth smoke with Earth 2.2.0-rc.10 (its first build), Cylinder World 1.1.2, Hydrology 0.6.2, Sea 0.6.2: stops at the
+  near band's Nice coast check as with rc.8 and with 0.5.4 (1 of 119,244 pixels 3.2 blocks up, WM-0056). Passed before
+  it: client pipeline, server permissions, far tile stream, survival exploration, cache identity, polar adapter, seam
+  band, automatic markers, ore heat maps, map key, GUI composition, day and night, line of sight, winds, and the GPU map
+  and far terrain renders up to that check. Not reached: the rest of the far terrain checks, generated polar terrain,
+  teleport, water bed, the mid-distance view (all passed with Earth 2.1.4 on the same code).
+* The author's 0.5.4 caches: the new key charts each world again (seen on the dedicated server: a new folder, the old
+  one kept); the first start removes the folders unused for 14 days: 148 server and 147 client folders, 5.4 GB, all
+  named as cache ids, no links; recorded terrain (`Wmap\observed`, 144 folders) is not touched.
+
+## 0.5.5 work: the chart's cache and memory (WM-0055), far terrain's passes (WM-0054)
+
+19 November 2026, worktree `perf` (branch `claude/perf-chart-and-far`), merged into `main`; from SU-0007's bench measurements.
+Decisions WM-D65 and WM-D66.
+
+* Core suite: **109116 assertions PASS** (new: the far mesh's ranges keep every triangle that can show, after the stitch,
+  for three meshes, five ranges and random camera offsets, and leave out most hidden ones).
+* **Memory, dedicated 1:10 server** (Devkit's runner set up, started by hand; Earth 2.2.0-rc.8, Cylinder World 1.1.1,
+  Hydrology 0.6.2, Sea 0.6.2, play style `earth-10`, no players; private bytes; Devkit's `/devkit gc` for the managed
+  heap kept after a full collection; Devkit's profiler on, except in 0.5.4's start from the cache; runs in
+  `C:\VS mods\work\perf\wmap-mem`, disposable; the same charting without the profiler: 10.65 GB, 9.81 GB (3.88 GB)):
+
+  | | settled | after a forced collection (managed kept) | peak |
+  | --- | --- | --- | --- |
+  | 0.5.4, chart from the cache | 4.51 GB | 4.45 GB (2.77 GB) | 4.8 GB |
+  | 0.5.4, charting an existing world | 10.70 GB | 10.12 GB (3.90 GB) | 12.4 GB |
+  | this build, charting it | **4.04 GB** | 4.04 GB (3.58 GB) | 12.2 GB |
+  | this build, chart from the cache | **4.31 GB** | 4.25 GB (2.44 GB) | 4.5 GB |
+  | this build, the same with an animal pack added (FotSA Manidae) | 4.16 GB | 4.10 GB (2.47 GB) | 4.3 GB |
+
+  With the animal pack the server read the chart from the same cache folder (no "Charting" line, no new folder); 0.5.4
+  charted again after any change of the mod list.
+
+  The bake's log: "Gave back the bake's memory in 1704 ms: heap 5311 -> 4002 MiB, process 10.6 -> 4.0 GiB". A full heap
+  dump of 0.5.4 after charting (6.9 GB of heap, 2.77 GB of it free large-object space) rooted the extra live memory mostly
+  at Earth's island edge caches (EA-0194); World Map's river copy was 349 MB in every session. Devkit's timeline: the chart
+  allocates 1.5-2.4 GB/s in its first 30 s and nothing after; the climate raster about 4.7 GB/s for 13 s (heap to 9 GB).
+* **Far terrain, offscreen GPU bench** (`tests/FarGpuBench`, new; RX 6600, driver 26.11.2, 1920 x 1080, view distance
+  384, shadows 2, SSAO 1, field of view 70, back faces culled, a synthetic world of 1:10's size with gentle hills and a
+  coast, the near band and climate tiles loaded, median of 40 frames after 30; 0.5.4's shaders from `git archive main`):
+
+  | view | 0.5.4 | 0.5.4 without terraces | this build | picture |
+  | --- | --- | --- | --- | --- |
+  | east, level | 1.874 ms | 0.780 | **1.083** | same colour and depth |
+  | east, 10° down | 1.943 | 0.800 | **1.109** | same |
+  | west to the coast, level | 1.503 | 0.781 | **1.017** | same |
+  | north, 20° down | 1.838 | 0.824 | **1.073** | same |
+
+  0.5.4's parts in the first view: depth pass 0.19 mesh + 0.25 terraces, colour 0.29 + 0.70, cover 0.19 + 0.26; this
+  build: terraces' depth 0.24, colour 0.23 mesh + 0.28 terraces, cover 0.12 + 0.22. Measured and not kept: one colour pass
+  with depth writes (1.22-1.42 ms, the shaders' discard shades everything), terraces before the mesh (13 pixels changed),
+  the mesh's first ring dropped whole (61 pixels changed), a bracketed matrix product (no difference).
+* Earth smoke (isolated server; Earth 2.1.4, Cylinder World 1.1.1, Hydrology 0.6.2, Sea 0.6.2, Astra Terra
+  0.15.0-dev.25): **PASS**, including 144 program variants (the cover's farterrain and farcells in all 24 settings) and the
+  cache identity checks. The smoke's stitch check captures every vertex of a mesh draw, so it now draws the whole mesh
+  (`FarTerrainDraw.Trim` off for the capture). With Earth 2.2.0-rc.8 the smoke stops at the near band's coast check (1 of
+  119,244 sea pixels 3.2 blocks up), with 0.5.4's code too, the same numbers: WM-0056.
+* **The author's report of charting at every start** (WM-0057), from their logs and data folder: the six sessions kept
+  (17-18 November) each opened a new world, created at that start, so each charted once (41-79 s; 520 s once, beside a new
+  1:10 world's spawn generation); no log shows a world charted twice with the same mods, and the dedicated server above
+  used the cache on a second start with 0.5.4 and with this build. 193 server and 192 client cache folders (8 GB) had
+  piled up since September: caches unused for 14 days are now removed at start (WM-D67; 4 new core assertions, 109120).
+* **In game, the SU-0007 bench** (19 November 2026, 17:42-18:07, the author's go-ahead): `work\perf\bench`, world `perf10`
+  (1:10), the author's graphics at 1920 x 1080, view distance 384, the full L6 mod set (Earth 2.2.0-rc.8, Cylinder World
+  1.1.1, Hydrology 0.6.2, Sea 0.6.2, Astra Terra, Ships, Sea Monsters, 34 content mods), Riga at noon (S1) and at night in
+  rain (S4), `.wmap mid` GPU readings with the parts switched off one at a time; 0.5.4 as installed against this branch
+  as `0.5.5-perf.1` (`3ed3f8e`):
+
+  | | far terrain GPU (`.wmap mid`) | terraces off | recordings off too | S4 frame p50 | S1 frame p50 (draw calls) |
+  | --- | --- | --- | --- | --- | --- |
+  | 0.5.4 | 2.17-2.19 ms | 1.13 | 0.97 | 7.85 ms | 8.10 ms (122) |
+  | this build, first start | 1.29-1.32 | 0.56 | 0.26-0.29 | 6.95 | 8.40 (176-197) |
+  | this build, second start | **1.28-1.30** | 0.81 | 0.68 | **6.92** | 8.53 (216-246) |
+
+  The night frame is 0.9 ms shorter, as the GPU time; the day scene's draw calls varied from 116 to 253 between and within
+  runs (the game's own content), so its frame time does not compare. First start of this build in single player: the
+  chart in 83.7 s, then "Gave back the bake's memory in 5621 ms: heap 17214 -> 8612 MiB, process 36.0 -> 14.3 GiB"; the
+  session then ran at 12.8-15.8 GB working set (SU-0007's first start of the same set with 0.5.4: 34.9 GB for the
+  session). The pause in single player is 5.6 s, once, as the client's heap is collected too. Not run: the far-terrain-off
+  reference (Cylinder World was updated in the Mods folder during the run). Another session's 30-bot server ran during
+  0.5.4's start (about 1.3 cores, stopped 17:44, before its measured windows), and another session's Cylinder World check
+  server ran for part of the bench (its load not known): the GPU timer is not affected; frame times may be a little.
+* **The far-view toggle** (WM-0053, WM-D68): builds; core suite 109120 PASS; Earth smoke (Earth 2.1.4, Cylinder World
+  1.1.1) **PASS**, its GUI composition building the atlas with the Far view button at four window sizes. In game (the
+  bench, 18:48-18:52, `0.5.5-perf.2`, Earth 2.2.0-rc.8, Cylinder World 1.1.2, Hydrology, Sea; perf10 over Riga): while the
+  world was charted again (a new Cylinder World build) `.wmap far` said "far view on, waiting for the world chart (22%
+  charted)", then 37 % and 95 %, then "far view on"; the hotkey `wmapfarview` ("Wmap: far view on/off") switched it off
+  (`.wmap mid`: far terrain off, GPU 0.00 ms; frame p50 8.06 to 6.79 ms; `FarTerrain` false in `wmap.json`) and
+  `.wmap far on` back (the near band's 49 tiles again, 8.11 ms, saved true); no World Map error in the logs. The
+  screenshots failed (AgentBridge's shot hit a GDI+ error), so the button itself was not seen; it was not clicked (the
+  bench cannot click a dialog), it calls the same method as the hotkey.
+* Not measured yet: 1:100, NVIDIA or Intel GPUs.
+
 ## 0.5.4: release build
 
 15 November 2026, worktree `explored` (branch `claude/survival-explored`), merged into `main`. The unexplored map only in
@@ -40,6 +193,12 @@ creative (WM-0051, WM-D63) and the next release's small fixes (WM-0045, WM-0047 
 * Final release build from `main` `9cb51f6`: 0 warnings, 0 errors; `release/wmap_0.5.4.zip`, 422,622 bytes, SHA-256
   `4d29ebcb0495c2a9e15ce20f4a55783288aa823556d2a799b28f915ed7426408` (a rebuild gives another hash). Core suite 108876 PASS; Earth
   smoke on this build: **PASS** (survival exploration included).
+* With Earth 2.0.1 (released after World Map 0.5.4; its rocks default to the game's own), the published zip
+  (`4d29ebcb…`): the Earth smoke failed only in its ore heat map check, which expected Earth's ground columns' complete,
+  stored tiles. With the game's own rocks every cell waits for its chunk, as designed (WM-D51), so the check now accepts
+  partial, unstored tiles there and the runner takes `-EarthRocks`. Earth smoke with Earth 2.0.1: **PASS** with its
+  default rocks (73 ores by reading, all 1024 cells of the tile waiting) and **PASS** with `-EarthRocks groundcolumns`
+  (79 ores, tile stored and read back); survival exploration passes in both.
 * Not checked: multiplayer with two clients, NVIDIA or Intel GPUs, a 0.5.3 client against a 0.5.4 server in game (the
   protocol check declines it; the smoke checks the messages).
 

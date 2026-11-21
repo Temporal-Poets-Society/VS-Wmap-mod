@@ -14,7 +14,7 @@
     <GameReferences Condition="'$(GameReferences)' == ''">$(MSBuildProjectDirectory)\.local\game</GameReferences>
     <!-- The installed VS 1.22 uses .NET 10. The available SDK is 8; use the installed runtime's reference surface. -->
     <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>
-    <ModVersion>0.5.4</ModVersion>
+    <ModVersion>0.5.5</ModVersion>
     <Version>$(ModVersion)</Version>
     <NetCoreRuntimeDir>$([System.IO.Directory]::GetDirectories('$(NetCoreRoot)shared\Microsoft.NETCore.App', '10.*')[0])</NetCoreRuntimeDir>
   </PropertyGroup>

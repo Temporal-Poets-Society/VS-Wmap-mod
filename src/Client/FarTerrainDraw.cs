@@ -211,7 +211,14 @@ public sealed class FarTerrainDraw : IDisposable
         GL.BindBuffer(BufferTarget.ArrayBuffer, previousBuffer);
         indexCount = mesh.Indices.Length;
         Bytes = (long)mesh.Vertices.Length * sizeof(float) + (long)mesh.Indices.Length * sizeof(int);
+        int ranges = 2 * (mesh.Runs?.Length ?? 0) + 1;
+        rangeFirsts = new int[ranges]; rangeCounts = new int[ranges]; rangeOffsets = new IntPtr[ranges];
     }
+    int[] rangeFirsts = Array.Empty<int>(), rangeCounts = Array.Empty<int>();
+    IntPtr[] rangeOffsets = Array.Empty<IntPtr>();
+    /// <summary>Draw only the parts of the mesh that can show (<see cref="FarMesh.Ranges"/>, 0.5.5, WM-0054); false draws all of
+    /// it, as up to 0.5.4 (the GPU bench compares them).</summary>
+    public bool Trim = true;
 
     /// <summary>The program was compiled again: forget its uniform locations, also when GL gives it the same id.</summary>
     public void ProgramReloaded() { program = 0; locations.Clear(); unitShifts.Clear(); uniformsFrame.Clear(); }
@@ -375,9 +382,20 @@ public sealed class FarTerrainDraw : IDisposable
     /// <summary>Draws the smooth mesh with <paramref name="programId"/>, which the caller has made current.</summary>
     public void Draw(int programId, FarFrame f)
     {
-        double from = f.TerraceEdge > 0 ? Math.Max(f.DrawFrom, f.SmoothStart - FarFrame.JoinOverlap) : f.SmoothStart;
-        if (!Bind(programId, f, 0, from, Math.Min(f.Far, Mesh?.Radius ?? 0))) return;
-        using (new GlDraw(vao)) GL.DrawElements(PrimitiveType.Triangles, indexCount, DrawElementsType.UnsignedInt, IntPtr.Zero);
+        double from = f.TerraceEdge > 0 ? Math.Max(f.DrawFrom, f.SmoothStart - FarFrame.JoinOverlap) : f.SmoothStart, to = Math.Min(f.Far, Mesh?.Radius ?? 0);
+        if (!Bind(programId, f, 0, from, to)) return;
+        using (new GlDraw(vao))
+        {
+            if (!Trim || Mesh.Runs == null) GL.DrawElements(PrimitiveType.Triangles, indexCount, DrawElementsType.UnsignedInt, IntPtr.Zero);
+            else
+            {
+                // The mesh's quads that can show between from and to (in its shaders' range); the rest only discarded fragments.
+                var (ox, oz) = Origin(Mesh, f.CameraX, f.CameraZ);
+                int n = Mesh.Ranges(f.CameraX - ox, f.CameraZ - oz, from, to, rangeFirsts, rangeCounts);
+                for (int i = 0; i < n; i++) rangeOffsets[i] = (IntPtr)(rangeFirsts[i] * (long)sizeof(int));
+                if (n > 0) GL.MultiDrawElements(PrimitiveType.Triangles, rangeCounts, DrawElementsType.UnsignedInt, rangeOffsets, n);
+            }
+        }
         Unbind();
     }
 

@@ -1,83 +1,98 @@
-WORLD MAP (WMAP) - MOD DB PAGE DRAFT FOR THE NEXT RELEASE
-Updated 15 November 2026 (WM-0012, 0.5.4). First prepared 31 October 2026 for 0.5.0.
-The author keeps World Map in development (0.x); publishing is the author's, nothing here is uploaded.
+WORLD MAP (WMAP) - MOD DB PAGE
+Updated 15 November 2026 for 0.5.4 (WM-0012). First prepared 31 October 2026 for 0.5.0. The upload is the author's.
+The release package for the author is work/moddb-release-2026-11-15/wmap/ in the suite folder: description.html (this
+repository's docs/moddb-description.html), changelog.txt and release-info.txt (both below), logo.png (docs/moddb-logo.png)
+and the zip.
 
-STILL OPEN BEFORE UPLOAD (the author's choices)
-- Version: 0.5.4, built 15 November 2026 (release/wmap_0.5.4.zip; its SHA-256 and size are below). If 0.5.3 is not on
-  the page yet (it was not on 14 November), the note below covers both; otherwise keep only its 0.5.4 part.
-- Source link: the repository andrisberzins-1/VS-Wmap-mod is private. Either make it public, or attach the
-  matching source ZIP to each release (GPL-3.0 needs the source offered with the binary).
-- Issue link: there is no public issue tracker. Options: the repository's issues once it is public, or the Mod DB
-  page's comments. Leave the field empty until one is chosen.
-- Gallery: candidates from the AgentBridge bench are in docs/publishing-assets/gallery/ (see GALLERY). Retake
-  in the author's own game where a capture shows a bench artefact (the "Need help" tip at the left edge).
-- The URL alias "wmap" is not checked.
-- The description links Astra Terra for Earth at mods.vintagestory.at/astraearth, its prepared alias; that page
-  is not uploaded yet. Check the link (and the Earth and Cylinder World ones) before publishing.
+WORLD MAP 0.5.4 - MOD DB UPLOAD
+Prepared 15 November 2026. The Mod DB page (mods.vintagestory.at/wmap) has 0.5.1; this upload is the next version on it.
 
-FORM FIELDS
-Name: World Map
-Category: Game Mod
-URL alias: wmap, if available (not checked)
-Suggested tags: Map, Mapping, Travel & Exploration, Graphics
-Side: Client and Server side mod
-Author: Andris (the manifest's author since 0.5.1)
-Mod ID: wmap
-Licence: GPL-3.0 (repository LICENSE, included in the mod ZIP)
+FILE
+File:           wmap_0.5.4.zip (copied in by the coordinator; the same file as the GitHub release)
+Size:           422,622 bytes
+SHA-256:        4d29ebcb0495c2a9e15ce20f4a55783288aa823556d2a799b28f915ed7426408
+Mod version:    0.5.4
+Mod ID:         wmap
+Changelog:      changelog.txt in this folder (0.5.2 to 0.5.4, newest first)
 
-Summary:
-A world atlas with nautical and terrain maps, exploration, paper map sharing and distant horizons.
+GAME VERSIONS
+Tick:           1.22.7 (built and tested on it).
+Manifest:       needs game 1.22.0 or later. Earlier 1.22.x versions are allowed by the manifest but were not tested;
+                tick them only if you accept that.
 
-DESCRIPTION
-Paste docs/moddb-description.html into the description editor's Source code view.
-It includes the author's AI disclosure and licence wording.
-Logo: docs/moddb-logo.png (480 x 320); source: docs/moddb-logo-source.md.
+SIDE
+Client and server ("Universal"): required on the client and on the server, and both need the same version (0.5.4).
 
-RELEASE FILE
-Version: (next release; fill in)
-Game checked: Vintage Story 1.22.7 (the version the suite builds and tests against, 13 November 2026)
-Manifest minimum: game 1.22.0; no compatibility claim for other game versions.
-Required on client: yes. Required on server: yes. Client and server need the same version (network
-format changed in 0.5.4: protocol 3).
-Old worlds: worlds made with earlier World Map versions are not supported by 0.5.4 (start a new world).
-Required companion mods: none
-Optional: Earth (predictions, far terrain, air pressure), Cylinder World (wrapping geography),
-Sea (wind charts), Astra Terra for Earth (local solar time in the coordinates box).
-Earth: craters and each region's grass seasons in the far view need an Earth with TerrainModel.GetSurfaceColumn
-and GrassSeasonAt (Earth 2.0.0); older Earths still work without them.
-Tested together on the bench and in the smoke test, 15 November 2026: Earth 2.0.0, Cylinder World 1.1.1,
-Hydrology 0.6.2 and Sea 0.6.1 (all released); Astra Terra for Earth 0.15.0-dev.25 in the smoke test (a test build;
-name only released versions on the page).
-Install companion mods' own dependencies when using them.
-Runtime ZIP: release/wmap_<version>.zip
-Matching source ZIP: (to be made with the release)
-Runtime SHA-256 / size: 4d29ebcb0495c2a9e15ce20f4a55783288aa823556d2a799b28f915ed7426408 / 422,622 bytes
-(release/wmap_0.5.4.zip built from main 9cb51f6 on 15 November 2026; a rebuild gives another hash)
+REQUIRED MODS
+None.
 
-RELEASE NOTE (draft: everything since 0.5.1)
-World Map 0.5.4 is a development release.
-- The unexplored map is for creative only: in survival, the predicted terrain of land you have not seen never
-  reaches your game (the server works out what each player has seen), so a modified client cannot uncover it.
-  Creative players, the wmap privilege and AllowAllPlayers get the whole map. The "shared world chart" world
-  option is gone. Paper maps chart only what their drawer has seen.
-- Start a new world: worlds made with earlier World Map versions are not supported by 0.5.4.
-- World Map is sturdier against changes in Earth and Cylinder World, and says in the log what it could not read.
-Also in this release, since 0.5.1 (drop this part if 0.5.3 is on the page already):
-- The far view, with Earth: lit as the game lights its own land; the game's grass and leaf colours through
-  the seasons (each region's own wet and dry seasons with a current Earth); no pale ring where your loaded
-  chunks end; relief finer than the mesh; high ground coloured by its climate; volcano craters; land you have
-  seen drawn as you saw it; forests at their recorded height, with crowns, meeting the nearer terraces
-  without a line.
-- The coordinates box sits in the top left corner on the game's own box colour and shows the local time and
-  the world's clock (UTC); with Astra Terra for Earth the local time is the solar time its sky follows. On
-  worlds without geography it shows the time alone. It draws under every dialog.
+OPTIONAL MODS (minimum versions as checked)
+- Earth 2.0.0 or later: the whole planet charted, rivers and lakes, latitude and longitude, the far view, climate
+  colours, the barometer's air pressure. Checked with Earth 2.0.0 and 2.0.1.
+- Cylinder World 1.1.1: the map wraps across the seam; alone, an approximate map of continents without the far view.
+- Sea 0.6.1: winds on the atlas and minimap through the Jonas barometer.
+- Hydrology 0.6.2: no direct link; checked together with it.
+- Astra Terra for Earth: the local solar time in the coordinates box (checked with a test build; no minimum stated).
+
+SAVES
+Worlds made with earlier World Map versions are not supported by 0.5.4: start a new world. Say so on the page (the
+description and changelog do).
+
+CATEGORY AND TAGS
+Category:       Game Mod
+Tags:           Map, Mapping, Travel & Exploration, Graphics
+
+PAGE
+Name:           World Map
+URL alias:      wmap (the page exists)
+Summary:        A world atlas with nautical and terrain maps, exploration, paper map sharing and distant horizons.
+Description:    description.html in this folder: paste it into the description editor's Source code view.
+Logo:           logo.png in this folder (480 x 320).
+Licence:        GPL-3.0 (LICENSE in the zip; the source is public on GitHub).
+
+LINKS
+GitHub release: https://github.com/Temporal-Poets-Society/VS-Wmap-mod/releases/tag/v0.5.4
+Wiki:           https://github.com/Temporal-Poets-Society/VS-Wmap-mod/wiki
+Source:         https://github.com/Temporal-Poets-Society/VS-Wmap-mod
+Issues:         https://github.com/Temporal-Poets-Society/VS-Wmap-mod/issues (open)
+
+ALSO NOTE
+- The description links the Mod DB pages of Earth, Cylinder World and Astra Terra for Earth; all three addresses
+  were checked and exist (15 November 2026).
+- Not checked: two or more players on one server together, NVIDIA or Intel graphics cards.
+- Gallery: candidate screenshots from the test bench are in the World Map repository, docs/publishing-assets/gallery/
+  (one of them shows the coordinates box in its old place and should be retaken). Optional.
+
+CHANGELOG FIELD (since 0.5.1, the version on the Mod DB)
+World Map 0.5.4 (15 November 2026)
+Start a new world: worlds made with earlier World Map versions are not supported. Client and server need 0.5.4.
+- The unexplored map is for creative only. In survival, only the land you have seen reaches your game: the chart,
+  the close-up detail and the far view. A modified game cannot uncover the rest. The same holds for spectators and in
+  a single-player survival world. Creative players, the wmap privilege and AllowAllPlayers get the whole map.
+- In survival the far view shows the land in your line of sight out to 8,192 blocks and the land you have charted;
+  new land appears a few seconds after you see it.
+- The world option "Wmap: shared world chart" is gone.
+- Paper maps chart only what their drawer has seen.
+- Sturdier with Earth and Cylinder World updates: World Map says in the log what it could not read, and far terrain
+  says why it is not drawn.
+
+World Map 0.5.3 (14 November 2026)
+- The coordinates box sits in the top left corner in the game's own box colour, under any window you open. It shows
+  the local time and the world's clock (UTC); with Astra Terra for Earth the local time is the solar time its sky
+  follows. Ctrl+Shift+V shows or hides it.
 - With Earth, the Jonas barometer reads the air pressure where you stand and whether it is rising or falling.
-- Ore heat maps on the Creative map (colour the map by one ore, or by how many ores the pick would list, at
-  every zoom; stored per world; they agree with the pick) ship switched off: a server can turn them on with
-  OreHeatMaps in wmap.json.
+- The far view looks like the land beside it: lit as the game lights its own land, the game's grass and leaf colours
+  through the seasons, no pale ring where your chunks end, finer relief, high ground coloured by its climate, forests
+  at their height, volcano craters, and land you have seen at its real height.
+- Ore heat maps on the Creative map: colour the map by one ore, or by how many ores the prospecting pick would list,
+  at every zoom. They agree with the pick, and /wmapore compares a column with it. They ship switched off; a server
+  turns them on with OreHeatMaps in wmap.json.
+- With a mismatched version or an atlas that did not start, the atlas says why instead of waiting for ever.
+
+World Map 0.5.2 (a test build, not uploaded before)
 - A new Earth world on full GLO-90 heights no longer waits about two minutes for the climate colours.
-- Big rivers no longer get a second, darker river beside them; grid labels follow the degree format.
-Client and server need this same version.
+- Big rivers no longer get a second, darker river beside them.
+- The map grid's labels follow the degree format you choose.
 
 GALLERY
 Use actual game captures. The cylinder logo is artwork, not a game capture.
